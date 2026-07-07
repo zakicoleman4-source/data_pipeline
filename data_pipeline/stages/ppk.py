@@ -50,11 +50,28 @@ NAV_EXTENSIONS: tuple[str, ...] = (
 _RINEX_NAV_NAME_PATTERN = ("[0-9][0-9][nglp]", "[0-9][0-9][NGLP]")
 
 
-def _tail_lines(text: str, n: int) -> str:
-    """Return the last ``n`` non-empty lines of ``text`` joined by newlines."""
+# rnx2rtkp emits a per-epoch progress line to stderr terminated by a bare
+# "\r" (unconditionally -- it never checks isatty). A long / high-rate session
+# therefore captures hundreds of thousands of progress "lines". Anything that
+# re-logs or retains that stream verbatim must collapse it first.
+_LINE_BREAK_RE = re.compile(r"[\r\n]+")
+
+# Cap on how much of the raw stdout/stderr streams PpkResult retains.
+# Full retention tripled the memory footprint of a long session for no
+# benefit -- every consumer only ever wants the tail.
+_RESULT_STREAM_MAX_CHARS = 4000
+
+
+def _tail_lines(text: str, n: int = 50) -> str:
+    """Return the last ``n`` non-empty lines of ``text`` joined by newlines.
+
+    Treats both ``\\r`` and ``\\n`` as line breaks so rnx2rtkp's
+    carriage-return progress stream collapses to its meaningful tail
+    instead of being handled as one enormous line.
+    """
     if not text:
         return ""
-    lines = [ln for ln in text.splitlines() if ln.strip()]
+    lines = [ln for ln in _LINE_BREAK_RE.split(text) if ln.strip()]
     return "\n".join(lines[-n:])
 
 
@@ -196,6 +213,10 @@ class PpkResult:
     pos_path: Path
     stat_path: Optional[Path]
     command: List[str]
+    # ``stdout`` / ``stderr`` hold only the *tail* of the captured streams
+    # (last ~50 meaningful lines, capped at _RESULT_STREAM_MAX_CHARS chars).
+    # rnx2rtkp emits a "\r" progress line per epoch, so retaining the full
+    # streams on a long session costs hundreds of MB for nothing.
     stdout: str
     stderr: str
     returncode: int
@@ -370,12 +391,16 @@ def run(
             context={"exe": str(exe), "command": cmd},
         ) from e
 
-    if proc.stdout:
-        for line in proc.stdout.splitlines():
-            log_(line)
-    if proc.stderr:
-        for line in proc.stderr.splitlines():
-            log_(line)
+    # Do NOT re-log the full captured streams: rnx2rtkp's stderr contains one
+    # "\r"-terminated progress line per epoch, so a long session yields
+    # 100k-500k lines. Dumping them all into the GUI log queue at once blocks
+    # the Tk mainloop for minutes and can panic Tk's text B-tree allocator.
+    # Log only a one-line summary plus the last ~50 meaningful lines.
+    tail = _tail_lines((proc.stdout or "") + "\n" + (proc.stderr or ""), 50)
+    log_(f"[ppk] rnx2rtkp finished rc={proc.returncode}; last lines:")
+    for line in tail.splitlines():
+        # Guard against a single break-free mega-line flooding the log.
+        log_(line if len(line) <= 2000 else line[:2000] + " ...[truncated]")
 
     if proc.returncode != 0:
         tail = _tail_lines(proc.stderr, 30) or _tail_lines(proc.stdout, 30)
@@ -456,8 +481,9 @@ def run(
         pos_path=output_pos,
         stat_path=stat_path if stat_path.is_file() else None,
         command=cmd,
-        stdout=proc.stdout,
-        stderr=proc.stderr,
+        # Retain only the tail of each stream -- see _RESULT_STREAM_MAX_CHARS.
+        stdout=_tail_lines(proc.stdout or "")[-_RESULT_STREAM_MAX_CHARS:],
+        stderr=_tail_lines(proc.stderr or "")[-_RESULT_STREAM_MAX_CHARS:],
         returncode=proc.returncode,
         rnx2rtkp_exe=exe,
         nav_files=nav_list,

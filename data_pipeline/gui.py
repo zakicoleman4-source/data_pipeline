@@ -172,6 +172,14 @@ class _Paths:
 
 class App:
     POLL_MS = 80
+    # Log-drain safety caps: a runaway producer (e.g. an external tool whose
+    # captured output is re-logged) can enqueue hundreds of thousands of
+    # messages. Draining them all in one `after` tick blocks the Tk mainloop
+    # ("Not Responding") and an unbounded Text widget can exhaust Tk's text
+    # B-tree allocator (Tcl_Panic -> hard process death). Drain at most
+    # MAX_PER_TICK messages per tick and keep the widget under MAX_LOG_LINES.
+    MAX_PER_TICK = 200
+    MAX_LOG_LINES = 10_000
 
     def __init__(self) -> None:
         # Try drag-and-drop root (optional dependency); fall back to plain Tk.
@@ -4103,28 +4111,49 @@ class App:
     def _log(self, msg: str) -> None:
         self._log_q.put(msg)
 
+    @staticmethod
+    def _log_tag_for(msg: str) -> str:
+        """Severity tag for one log line (kept Tk-free so it is unit-testable)."""
+        s = msg.lstrip()
+        if s.startswith("==="):
+            return "t_done" if "done" in s.lower() else "t_stage"
+        if s.startswith("!!!"):
+            return "t_error"
+        if s.startswith("Traceback") or "Error:" in s or "Exception" in s:
+            return "t_error"
+        if s.startswith("[") or s.startswith("cmd="):
+            return "t_step"
+        if "warning" in s.lower() or "warn" in s.lower():
+            return "t_warn"
+        return "t_normal"
+
     def _drain_log_queue(self) -> None:
+        # Cap the batch so a flooded queue can never freeze the mainloop:
+        # anything beyond MAX_PER_TICK waits for the next scheduled tick.
+        inserted = False
         try:
-            while True:
+            for _ in range(self.MAX_PER_TICK):
                 msg = self._log_q.get_nowait()
-                s = msg.lstrip()
-                if s.startswith("==="):
-                    tag = "t_done" if "done" in s.lower() else "t_stage"
-                elif s.startswith("!!!"):
-                    tag = "t_error"
-                elif s.startswith("Traceback") or "Error:" in s or "Exception" in s:
-                    tag = "t_error"
-                elif s.startswith("[") or s.startswith("cmd="):
-                    tag = "t_step"
-                elif "warning" in s.lower() or "warn" in s.lower():
-                    tag = "t_warn"
-                else:
-                    tag = "t_normal"
-                self.log_text.insert("end", msg + "\n", tag)
-                self.log_text.see("end")
+                self.log_text.insert("end", msg + "\n", self._log_tag_for(msg))
+                inserted = True
         except queue.Empty:
             pass
-        self.root.after(self.POLL_MS, self._drain_log_queue)
+        if inserted:
+            try:
+                # Trim from the top so the widget (and Tk's text B-tree
+                # memory) stays bounded during very long sessions.
+                n_lines = int(self.log_text.index("end-1c").split(".")[0])
+                if n_lines > self.MAX_LOG_LINES:
+                    self.log_text.delete(
+                        "1.0", f"{n_lines - self.MAX_LOG_LINES + 1}.0")
+            except (tk.TclError, ValueError):
+                pass
+            # Autoscroll once per batch, not once per line.
+            self.log_text.see("end")
+        # Reschedule: drain a backlog quickly (short delay) but idle at the
+        # normal poll cadence.
+        delay = 10 if not self._log_q.empty() else self.POLL_MS
+        self.root.after(delay, self._drain_log_queue)
 
     def _set_busy(self, busy: bool, stage: str = "") -> None:
         self._busy = busy
