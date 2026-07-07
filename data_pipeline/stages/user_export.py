@@ -105,6 +105,60 @@ def winning_export_filter() -> RobustFilterConfig:
 
 
 # ---------------------------------------------------------------------------
+# Export coordinate-source chooser (client request, 2026-07-07).
+# ---------------------------------------------------------------------------
+def resolve_export_rows(
+    raw_pos_rows: list[PosRow],
+    *,
+    source: str = "raw",
+    imu_rows=None,
+    stat_path=None,
+    log=None,
+) -> list[PosRow]:
+    """Pick which trajectory the client export serializes, DECOUPLED from
+    whatever smoother the pipeline ran for georef/other stages.
+
+    ``source``:
+      * ``"raw"``  -> the raw PPK rows, returned unchanged (new list, same
+        row objects);
+      * any name from :func:`data_pipeline.smoothers.list_smoothers` -> run
+        that smoother on the raw rows and return its output PosRows.
+
+    ``imu_rows`` / ``stat_path`` are forwarded to the smoother (some
+    smoothers require IMU; ``stat_path`` raises epoch-weight quality).
+
+    Raises ``ValueError`` for an unknown source (message lists the valid
+    options) and ``RuntimeError`` when the requested smoother fails.
+    """
+    from ..smoothers import list_smoothers, run_smoother
+
+    key = str(source).strip().lower()
+    if key == "raw":
+        return list(raw_pos_rows)
+    valid = ["raw"] + list_smoothers()
+    if key not in list_smoothers():
+        raise ValueError(
+            f"resolve_export_rows: unknown export source {source!r}. "
+            f"Valid options: {', '.join(valid)}."
+        )
+    res = run_smoother(
+        key, list(raw_pos_rows), imu_rows=imu_rows,
+        stat_path=stat_path, log=log,
+    )
+    if not res.ok:
+        raise RuntimeError(
+            f"resolve_export_rows: export smoother {key!r} failed "
+            f"({res.error_code}): {res.error_message}"
+            + (f" Hint: {res.error_hint}" if res.error_hint else "")
+        )
+    if not res.fused:
+        raise RuntimeError(
+            f"resolve_export_rows: export smoother {key!r} returned no rows."
+        )
+    return list(res.fused)
+
+
+# ---------------------------------------------------------------------------
 # Export coordinate systems (client chooser, 2026-07-05).
 # ---------------------------------------------------------------------------
 # ``coord_systems`` selects which coordinate blocks the CSV carries. The
@@ -129,6 +183,11 @@ _COORD_COLUMNS: dict[str, tuple[str, ...]] = {
     "utm": ("utm_easting_m", "utm_northing_m", "utm_zone", "h_m"),
     "enu": ("e_m", "n_m", "u_m"),
 }
+# Every coordinate column name (all systems) — the disagreement gate blanks
+# ALL of them for a dropped row, whichever systems were requested.
+_COORD_COLUMNS_ALL: tuple[str, ...] = tuple(dict.fromkeys(
+    c for cols in _COORD_COLUMNS.values() for c in cols
+))
 
 
 def _normalize_coord_systems(
@@ -336,6 +395,79 @@ def _apply_z_smoothing(rows: list[PosRow], z_sigma_s: float) -> list[PosRow]:
     return [replace(r, h_m=h) for r, h in zip(rows, smoothed)]
 
 
+# ---------------------------------------------------------------------------
+# Final-velocity export + coord/Doppler disagreement gate (client, 2026-07-07).
+# ---------------------------------------------------------------------------
+_FINAL_VEL_COLS: tuple[str, ...] = (
+    "final_vn_mps", "final_ve_mps", "final_vu_mps", "final_speed_mps",
+    "vel_disagree_mps", "coords_dropped",
+)
+
+
+def _coord_derived_velocities_enu(
+    rows: Sequence[PosRow],
+    max_dt_s: float = 10.0,
+) -> list[tuple[float, float, float]]:
+    """Per-epoch coordinate-derived velocity (ve, vn, vu m/s, local ENU at
+    each epoch) from consecutive positions: central difference where both
+    neighbours exist, one-sided at the series ends.
+
+    NaN triple when a neighbour position is non-finite, dt is non-positive,
+    or the differencing window spans a data hole (> ``max_dt_s`` per step) —
+    a velocity bridged across a gap would be meaningless.
+    """
+    n = len(rows)
+    nanv = (float("nan"),) * 3
+    if n < 2:
+        return [nanv] * n
+    xyz: list[Optional[tuple[float, float, float]]] = []
+    for r in rows:
+        if (math.isfinite(r.lat_deg) and math.isfinite(r.lon_deg)
+                and math.isfinite(r.h_m)):
+            xyz.append(llh_to_ecef(r.lat_deg, r.lon_deg, r.h_m))
+        else:
+            xyz.append(None)
+    out: list[tuple[float, float, float]] = []
+    for i in range(n):
+        j = i - 1 if i > 0 else i
+        k = i + 1 if i < n - 1 else i
+        if xyz[i] is None or xyz[j] is None or xyz[k] is None:
+            out.append(nanv)
+            continue
+        dt = rows[k].utc_s - rows[j].utc_s
+        if not math.isfinite(dt) or dt <= 0.0 or dt > max_dt_s * (k - j):
+            out.append(nanv)
+            continue
+        ref = (rows[i].lat_deg, rows[i].lon_deg, rows[i].h_m)
+        e1, n1, u1 = ecef_to_enu(*xyz[j], ref)
+        e2, n2, u2 = ecef_to_enu(*xyz[k], ref)
+        out.append(((e2 - e1) / dt, (n2 - n1) / dt, (u2 - u1) / dt))
+    return out
+
+
+def _vel_disagreement_mps(
+    coord_vel: tuple[float, float, float],
+    r: PosRow,
+) -> float:
+    """Vector norm of (coord-derived ENU velocity - raw Doppler ENU velocity).
+
+    Requires the horizontal components on BOTH sides; the vertical term is
+    included only when finite on both sides (Doppler ``vu`` is often absent).
+    NaN when the disagreement cannot be judged.
+    """
+    cve, cvn, cvu = coord_vel
+    if not (math.isfinite(cve) and math.isfinite(cvn)
+            and math.isfinite(r.ve) and math.isfinite(r.vn)):
+        return float("nan")
+    de = cve - r.ve
+    dn = cvn - r.vn
+    d2 = de * de + dn * dn
+    if math.isfinite(cvu) and math.isfinite(r.vu):
+        du = cvu - r.vu
+        d2 += du * du
+    return math.sqrt(d2)
+
+
 # --- Accuracy bar (project-wide, see overnight spec) ---------------------
 # horizontal <= 6 m @ 2 sigma  AND  speed <= 3 km/h @ 2 sigma.
 # The 1-sigma fields (std_xy_smart, std_v*) are doubled to get 2-sigma.
@@ -403,6 +535,11 @@ class UserExportResult:
     # TIME-basis chooser (2026-07-05):
     time_bases: tuple = DEFAULT_TIME_BASES  # normalised bases actually emitted
     audio_start_utc_s: Optional[float] = None  # UTC of stream sample 0 (stream basis)
+    # Final-velocity export + coord/Doppler disagreement gate (2026-07-07):
+    final_velocity_emitted: bool = False   # True when final_* columns shipped
+    vel_disagree_threshold_mps: Optional[float] = None  # gate threshold used
+    n_vel_disagree: int = 0     # exported epochs over the threshold (final_v* blanked)
+    n_coords_dropped: int = 0   # exported epochs whose coordinates were blanked
 
     def summary_text(self) -> str:
         """One-paragraph user-facing coverage + honesty summary."""
@@ -426,6 +563,15 @@ class UserExportResult:
             note = f"  time basis   : {'+'.join(self.time_bases)}"
             if self.audio_start_utc_s is not None:
                 note += f" (audio_start_utc_s={self.audio_start_utc_s:.6f})"
+            lines.append(note)
+        if self.final_velocity_emitted:
+            note = "  final vel    : raw Doppler final_v*/final_speed columns emitted"
+            if self.vel_disagree_threshold_mps is not None:
+                note += (
+                    f"; disagree gate {self.vel_disagree_threshold_mps:.2f} m/s -> "
+                    f"{self.n_vel_disagree} epoch(s) over "
+                    f"({self.n_coords_dropped} coords blanked, coords_dropped=1)"
+                )
             lines.append(note)
         if self.z_smoothed:
             lines.append(
@@ -466,8 +612,31 @@ def export_trajectory(
     z_sigma_s: float = DEFAULT_Z_SIGMA_S,
     time_bases: Sequence[str] = DEFAULT_TIME_BASES,
     audio_start_utc_s: Optional[float] = None,
+    emit_final_velocity: bool = False,
+    vel_disagree_threshold_mps: Optional[float] = None,
+    drop_coords_on_vel_disagree: bool = True,
 ) -> UserExportResult:
     """Write the user-facing path CSV.
+
+    Final velocity + coord/Doppler disagreement gate (client, 2026-07-07)
+    ---------------------------------------------------------------------
+    ``emit_final_velocity=True`` (or setting ``vel_disagree_threshold_mps``,
+    which implies it) appends the ``final_vn_mps / final_ve_mps /
+    final_vu_mps / final_speed_mps / vel_disagree_mps / coords_dropped``
+    columns. ``final_v*`` is the RAW PPK DOPPLER velocity (r.vn/ve/vu);
+    ``vel_disagree_mps`` is the vector norm between the coordinate-derived
+    ENU velocity (central-difference of consecutive positions) and that
+    Doppler velocity. Default OFF so the historical column set is untouched
+    byte-for-byte.
+
+    When ``vel_disagree_threshold_mps`` is set, a row whose disagreement
+    exceeds the threshold gets ``final_v*``/``final_speed`` left EMPTY, and
+    (with ``drop_coords_on_vel_disagree=True``, the client default) its
+    coordinate columns (lat/lon/h + derived ECEF/UTM/ENU) left EMPTY too,
+    with ``coords_dropped=1`` — the row itself ships (time +
+    ``vel_disagree_mps`` intact) so the omission is visible, never a silent
+    deletion. Threshold ``None`` -> ``final_v*`` always emitted, coordinates
+    never dropped.
 
     Suppression semantics (client-ready, 2026-07-02)
     ------------------------------------------------
@@ -629,6 +798,20 @@ def export_trajectory(
         z_smoothed_applied = smoothed_rows is not rows
         rows = smoothed_rows
 
+    # --- Final-velocity export + coord/Doppler disagreement gate. ---
+    # Computed on the FINAL exported rows (post filter/Z-smooth) so the
+    # coordinate-derived velocity matches the coordinates actually shipped.
+    final_vel_enabled = bool(emit_final_velocity) or (
+        vel_disagree_threshold_mps is not None
+    )
+    vel_disagree: list[float] = []
+    if final_vel_enabled:
+        coord_vels = _coord_derived_velocities_enu(rows)
+        vel_disagree = [
+            _vel_disagreement_mps(coord_vels[i], r)
+            for i, r in enumerate(rows)
+        ]
+
     # --- Coordinate-system chooser setup. ---
     systems = _normalize_coord_systems(coord_systems)
     coord_cols: list[str] = []
@@ -713,6 +896,10 @@ def export_trajectory(
         #                  bar; 0 = velocity untrusted (row still valid).
         "pos_within_bar", "vel_trusted",
     ]
+    if final_vel_enabled:
+        # Opt-in final velocity block (raw PPK Doppler + disagreement gate);
+        # appended LAST so the historical columns keep their positions.
+        cols += list(_FINAL_VEL_COLS)
 
     def _fmt(v: float, w: int = 4) -> str:
         if v is None or not math.isfinite(v):
@@ -745,6 +932,10 @@ def export_trajectory(
         enu_e: float = float("nan")
         enu_n: float = float("nan")
         enu_u: float = float("nan")
+        # Final-velocity gate (2026-07-07):
+        vel_disagree_mps: float = float("nan")
+        vel_dropped: bool = False    # final_v* blanked (over threshold)
+        coords_dropped: bool = False  # coordinate columns blanked
 
     epochs: list[_Epoch] = []
     for i, r in enumerate(rows):
@@ -800,6 +991,16 @@ def export_trajectory(
         vel_ok = math.isfinite(speed_2sigma) and speed_2sigma <= speed_bar_mps
         accept = (not reasons) if suppress_inaccurate else True
         reason = "+".join(reasons) if reasons else ""
+
+        # Final-velocity coord/Doppler disagreement gate (2026-07-07).
+        dis = vel_disagree[i] if final_vel_enabled else float("nan")
+        vel_dropped = (
+            vel_disagree_threshold_mps is not None
+            and math.isfinite(dis)
+            and dis > vel_disagree_threshold_mps
+        )
+        coords_dropped = vel_dropped and drop_coords_on_vel_disagree
+
         epochs.append(_Epoch(
             idx=i, row=r, gpst=gpst, x=x, y=y, z=z, std_xy=std_xy,
             speed=speed, vel_pct=vel_pct, h_2sigma_m=h_2sigma,
@@ -807,6 +1008,8 @@ def export_trajectory(
             over_bar=over_bar, vel_ok=vel_ok,
             utm_e=utm_e, utm_n=utm_n,
             enu_e=enu_e, enu_n=enu_n, enu_u=enu_u,
+            vel_disagree_mps=dis, vel_dropped=vel_dropped,
+            coords_dropped=coords_dropped,
         ))
 
     # Group rejected epochs into contiguous sections.
@@ -893,20 +1096,28 @@ def export_trajectory(
                 e.speed_2sigma_mps * 3.6
                 if math.isfinite(e.speed_2sigma_mps) else float("nan")
             )
-            coord_vals = {
-                "lat_deg": _fmt(r.lat_deg, 9),
-                "lon_deg": _fmt(r.lon_deg, 9),
-                "h_m": _fmt(r.h_m, 4),
-                "x_ecef_m": _fmt(e.x, 4),
-                "y_ecef_m": _fmt(e.y, 4),
-                "z_ecef_m": _fmt(e.z, 4),
-                "utm_easting_m": _fmt(e.utm_e, 4),
-                "utm_northing_m": _fmt(e.utm_n, 4),
-                "utm_zone": utm_zone_str,
-                "e_m": _fmt(e.enu_e, 4),
-                "n_m": _fmt(e.enu_n, 4),
-                "u_m": _fmt(e.enu_u, 4),
-            }
+            if e.coords_dropped:
+                # Disagreement gate: the client explicitly wants the
+                # coordinates EMPTY (all systems) when |coord_vel -
+                # doppler_vel| > threshold; the row still ships (time +
+                # vel_disagree_mps + coords_dropped=1) so the omission is
+                # visible, never silently deleted.
+                coord_vals = {c: "" for c in _COORD_COLUMNS_ALL}
+            else:
+                coord_vals = {
+                    "lat_deg": _fmt(r.lat_deg, 9),
+                    "lon_deg": _fmt(r.lon_deg, 9),
+                    "h_m": _fmt(r.h_m, 4),
+                    "x_ecef_m": _fmt(e.x, 4),
+                    "y_ecef_m": _fmt(e.y, 4),
+                    "z_ecef_m": _fmt(e.z, 4),
+                    "utm_easting_m": _fmt(e.utm_e, 4),
+                    "utm_northing_m": _fmt(e.utm_n, 4),
+                    "utm_zone": utm_zone_str,
+                    "e_m": _fmt(e.enu_e, 4),
+                    "n_m": _fmt(e.enu_n, 4),
+                    "u_m": _fmt(e.enu_u, 4),
+                }
             time_vals: list[str] = []
             for b in bases:
                 if b == "gpst":
@@ -917,7 +1128,7 @@ def export_trajectory(
                     time_vals.append(_fmt(r.utc_s - audio_start_utc_s, 6))
                 else:  # iso
                     time_vals.append(_iso_utc(r.utc_s))
-            wr.writerow([
+            out_row = [
                 *time_vals,
                 *[coord_vals[c] for c in coord_cols],
                 _fmt(r.vn, 5), _fmt(r.ve, 5), _fmt(r.vu, 5),
@@ -931,7 +1142,29 @@ def export_trajectory(
                 "1" if gap_by_t.get(round(r.utc_s, 3), False) else "0",
                 "0" if e.over_bar else "1",
                 "1" if e.vel_ok else "0",
-            ])
+            ]
+            if final_vel_enabled:
+                if e.vel_dropped:
+                    # Over the disagreement threshold: final velocity is NOT
+                    # certifiable -> emit empty cells (visible omission).
+                    out_row += ["", "", "", ""]
+                else:
+                    if math.isfinite(r.vn) and math.isfinite(r.ve):
+                        fs2 = r.vn * r.vn + r.ve * r.ve
+                        if math.isfinite(r.vu):
+                            fs2 += r.vu * r.vu
+                        final_speed = math.sqrt(fs2)
+                    else:
+                        final_speed = float("nan")
+                    out_row += [
+                        _fmt(r.vn, 5), _fmt(r.ve, 5), _fmt(r.vu, 5),
+                        _fmt(final_speed, 4),
+                    ]
+                out_row += [
+                    _fmt(e.vel_disagree_mps, 4),
+                    "1" if e.coords_dropped else "0",
+                ]
+            wr.writerow(out_row)
             n += 1
     os.replace(tmp, out_csv)
 
@@ -952,6 +1185,10 @@ def export_trajectory(
         z_sigma_s_used=z_sigma_s if z_smoothed_applied else float("nan"),
         time_bases=tuple(bases),
         audio_start_utc_s=audio_start_utc_s if "audio" in bases else None,
+        final_velocity_emitted=final_vel_enabled,
+        vel_disagree_threshold_mps=vel_disagree_threshold_mps,
+        n_vel_disagree=sum(1 for e in epochs if e.accept and e.vel_dropped),
+        n_coords_dropped=sum(1 for e in epochs if e.accept and e.coords_dropped),
     )
 
 

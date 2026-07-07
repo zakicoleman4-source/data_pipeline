@@ -37,6 +37,18 @@ from typing import Optional
 import numpy as np
 
 
+def _export_source_choices() -> list[str]:
+    """'raw' + every registered smoother name (for --export-source)."""
+    repo = Path(__file__).resolve().parent.parent
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    try:
+        from data_pipeline.smoothers import list_smoothers
+        return ["raw"] + list_smoothers()
+    except Exception:
+        return ["raw"]
+
+
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     repo = Path(__file__).resolve().parent.parent
     configs_dir = repo / "data_pipeline" / "configs"
@@ -82,6 +94,25 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
                         "utc->utc_s (absolute UTC unix s), audio->t_audio_s "
                         "(seconds from audio sample 0, needs the session's audio "
                         "anchor), iso->utc_iso (ISO-8601 UTC string).")
+    p.add_argument("--export-source", default=None,
+                   choices=_export_source_choices(),
+                   help="Which trajectory trajectory_user.csv/.kml serialize, "
+                        "INDEPENDENT of --smoother (which still drives georef "
+                        "and the other stages). 'raw' = raw PPK rows exactly; "
+                        "any smoother name = run that smoother on the raw PPK "
+                        "rows for the export only. Default: unset = current "
+                        "behavior (the pipeline smoother's rows when an epoch "
+                        "smoother ran, else raw PPK).")
+    p.add_argument("--emit-final-velocity", action="store_true", default=False,
+                   help="Add final_vn/ve/vu_mps + final_speed_mps (raw PPK "
+                        "Doppler) + vel_disagree_mps + coords_dropped columns "
+                        "to trajectory_user.csv.")
+    p.add_argument("--vel-disagree-threshold", type=float, default=None,
+                   help="Coord/Doppler velocity disagreement gate (m/s). When "
+                        "set (implies --emit-final-velocity), rows where "
+                        "|coord-derived vel - Doppler vel| exceeds this get "
+                        "EMPTY final_v* AND EMPTY coordinate columns, with "
+                        "coords_dropped=1 (row kept, omission visible).")
     p.add_argument("--no-smooth-z", dest="smooth_z", action="store_false", default=True,
                    help="Disable height/Z smoothing on export (default: Z is smoothed).")
     p.add_argument("--z-sigma-s", type=float, default=3.0,
@@ -370,9 +401,36 @@ def main(argv: Optional[list[str]] = None) -> int:
     # ---- Stage 5b: user-facing path export ----
     log("=" * 60); log("[bonus] user trajectory export")
     try:
-        from data_pipeline.stages.user_export import export_trajectory, export_kml
-        # Export the SMOOTHED rows when an epoch smoother ran; else raw Post-processing.
-        if use_epoch_weighted or use_epoch_weighted_v2:
+        from data_pipeline.stages.user_export import (
+            export_trajectory, export_kml, resolve_export_rows,
+        )
+        # --- Coordinate-source chooser: --export-source picks the exported
+        # trajectory INDEPENDENTLY of --smoother (which still drives georef).
+        if args.export_source is not None:
+            imu_for_export = None
+            try:
+                from data_pipeline.parsers import parse_imu as _parse_imu_exp
+                imu_for_export = _parse_imu_exp(raw.sensors_txt)
+            except Exception as _e:
+                log(f"[export] IMU parse for --export-source failed ({_e}); "
+                    "running the export smoother without IMU.")
+            export_rows = resolve_export_rows(
+                parse_rtkpos(pos_path),
+                source=args.export_source,
+                imu_rows=imu_for_export,
+                stat_path=(ppk_res.stat_path
+                           if (ppk_res.stat_path and ppk_res.stat_path.is_file())
+                           else None),
+                log=log,
+            )
+            tag = ("raw_ppk" if args.export_source == "raw"
+                   else args.export_source)
+            log(f"[export] source={args.export_source} "
+                f"({len(export_rows)} rows; independent of --smoother="
+                f"{args.smoother})")
+        # Otherwise: export the SMOOTHED rows when an epoch smoother ran;
+        # else raw Post-processing (historical behavior).
+        elif use_epoch_weighted or use_epoch_weighted_v2:
             export_rows = smoothed_rows  # built above
             tag = args.smoother
         else:
@@ -412,6 +470,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             smooth_z=args.smooth_z, z_sigma_s=args.z_sigma_s,
             time_bases=tuple(time_bases),
             audio_start_utc_s=audio_start_utc_s,
+            emit_final_velocity=args.emit_final_velocity,
+            vel_disagree_threshold_mps=args.vel_disagree_threshold,
         )
         log(f"[export] {ue.n_rows}/{ue.n_input_rows} rows "
             f"(dropped={ue.n_dropped_rows}, over_bar_flagged={ue.n_flagged_over_bar}, "
