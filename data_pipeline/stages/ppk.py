@@ -79,7 +79,7 @@ def resolve_rnx2rtkp(override: Optional[Path] = None) -> Path:
     """Locate ``the solver binary`` via the central :mod:`data_pipeline.lab_tools` resolver.
 
     Honours, in order: ``override`` argument → ``RNX2RTKP`` env var →
-    ``data_to_frames.config.json`` next to the package → the
+    ``data_pipeline.config.json`` next to the package → the
     lab-developer default install path → system ``PATH``. Raises
     :class:`FileNotFoundError` listing every probed path on miss.
     """

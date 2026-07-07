@@ -1,4 +1,4 @@
-"""Loosely-coupled Motion sensor/Signal fusion for the data_to_frames pipeline.
+"""Loosely-coupled Motion sensor/Signal fusion for the data_pipeline pipeline.
 
 Two components:
     1. Complementary-update complementary filter — attitude (quaternion) at ~200 Hz

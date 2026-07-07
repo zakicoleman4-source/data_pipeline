@@ -13,7 +13,7 @@ Resolution order for every tool, in priority:
 
 1. Explicit ``override`` argument passed by a caller.
 2. Per-tool environment variable (e.g. ``RNX2RTKP``).
-3. ``data_to_frames.config.json`` next to the package root if present.
+3. ``data_pipeline.config.json`` next to the package root if present.
 4. The lab developer's default install path (see constants below).
 5. ``shutil.which`` of the binary name on the system PATH.
 
@@ -56,19 +56,19 @@ _ENV_VARS: dict[str, str] = {
 
 
 def _config_file() -> Path:
-    """Return the optional ``data_to_frames.config.json`` location.
+    """Return the optional ``data_pipeline.config.json`` location.
 
     The file lives next to the installed pipeline (one level above the
     ``data_pipeline`` package). It is OPTIONAL — clients that prefer
     env vars or that don't customise paths never need to create it.
     """
-    return Path(__file__).resolve().parent.parent / "data_to_frames.config.json"
+    return Path(__file__).resolve().parent.parent / "data_pipeline.config.json"
 
 
 def _bundled_tool_path(name: str) -> Optional[Path]:
     """Resolve a tool bundled inside the PyInstaller dist or source tree.
 
-    When the user runs the frozen ``data_to_frames.exe``,
+    When the user runs the frozen ``data_pipeline.exe``,
     ``sys.frozen`` is set and ``sys._MEIPASS`` points at the
     extracted ``_internal`` directory. The bundled ``vendor/rtklib/`` +
     ``vendor/the external converter/`` live there. From a source checkout, the same

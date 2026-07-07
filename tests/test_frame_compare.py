@@ -128,7 +128,7 @@ def test_load_ecef_round_trip(tmp_path: Path) -> None:
 def test_load_georef_csv_with_comment_header(tmp_path: Path) -> None:
     georef = tmp_path / "Georef.csv"
     georef.write_text(
-        "# reference CSV (client_pipeline). Image=camera label\n"
+        "# reference CSV (data_pipeline). Image=camera label\n"
         "Image,Latitude,Longitude,Altitude,AccuracyX,AccuracyY,AccuracyZ\n"
         "frame_000001,47.500000000,8.500000000,430.2500,0.05,0.05,0.10\n"
         "frame_000002,47.500001000,8.500001000,430.3000,0.05,0.05,0.10\n",

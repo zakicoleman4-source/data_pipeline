@@ -6,7 +6,7 @@
 [   0.3s] [bridge] GNSS boot->UTC derived locally from 1414 measurements Fix rows (recording.txt empty and Raw ChipsetElapsedRealtimeNanos=0).
 [   0.3s] [bridge] boot->UTC anchor source = measurements-fix-fallback, n=1414, rmse_s=0.0003
 [   0.3s] [bridge] video_t0_boottime_ns (frame 0) = 2541859675000
-[   0.5s] [bridge] synthesized recording_map: 42298 (video_ns, utc) rows -> C:\Aj\gps\client_pipeline\_vio_deepdive_out\synthesized_recording_map.txt
+[   0.5s] [bridge] synthesized recording_map: 42298 (video_ns, utc) rows -> C:\Aj\gps\data_pipeline\_vio_deepdive_out\synthesized_recording_map.txt
 [   0.5s] parsing sensors_*.txt (gyro-aided VO)
 [   1.5s] sensors: 280914 rows
 [   1.5s] running run_vio_multiframe_v2 (frame_decim_hz=4.0) -- this can take several minutes

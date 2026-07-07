@@ -10,7 +10,7 @@ Two discovery paths, both tolerant of failure:
 
 2. **Entry-points** (thin extra): packages installed in the environment can
    advertise plugins under the setuptools entry-point groups
-   ``client_pipeline.fusion`` and ``client_pipeline.calibration``. Each
+   ``data_pipeline.fusion`` and ``data_pipeline.calibration``. Each
    entry point is loaded; loading the referenced object is expected to trigger
    its registration decorator (or the object can be registered manually inside
    its module). Tolerates "none installed".
@@ -38,8 +38,8 @@ from .plugins_api import (
 _log = logging.getLogger(__name__)
 
 # Entry-point groups third-party packages advertise plugins under.
-FUSION_ENTRY_POINT_GROUP = "client_pipeline.fusion"
-CALIBRATION_ENTRY_POINT_GROUP = "client_pipeline.calibration"
+FUSION_ENTRY_POINT_GROUP = "data_pipeline.fusion"
+CALIBRATION_ENTRY_POINT_GROUP = "data_pipeline.calibration"
 
 # Where drop-in plugin files live.
 _PLUGINS_PKG = "data_pipeline.plugins"

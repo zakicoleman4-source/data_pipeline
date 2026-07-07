@@ -1,4 +1,4 @@
-"""data_to_frames first-launch health check.
+"""data_pipeline first-launch health check.
 
 Run AFTER ``setup.bat`` to confirm every external dependency the
 pipeline relies on is actually reachable on this machine. Prints a
@@ -129,7 +129,7 @@ def check_writable_temp() -> int:
 
 def main() -> int:
     print("=" * 60)
-    print(" data_to_frames — environment doctor")
+    print(" data_pipeline — environment doctor")
     print("=" * 60)
 
     fails = 0

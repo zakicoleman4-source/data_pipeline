@@ -1,5 +1,5 @@
 @echo off
-REM data_to_frames Windows installer wrapper.
+REM data_pipeline Windows installer wrapper.
 REM   - Resolves the Python on PATH
 REM   - Calls install.py which handles pip + gtsam-via-conda fallback
 REM   - Pauses at the end so users see the report before the window closes
@@ -18,7 +18,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo === data_to_frames installer ===
+echo === data_pipeline installer ===
 python "%~dp0install.py" %*
 set INSTALL_RC=%ERRORLEVEL%
 

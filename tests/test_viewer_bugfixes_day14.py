@@ -73,7 +73,7 @@ _GEOREF_DATA = (
     "frame_000002.png,32.060591567,34.803635616,48.5207\n"
 )
 _GEOREF_COMMENT = (
-    "# the external tool reference CSV (client_pipeline). Image=camera label, "
+    "# the external tool reference CSV (data_pipeline). Image=camera label, "
     "Latitude/Longitude=WGS84 deg. CRS EPSG:4326.\n"
 )
 

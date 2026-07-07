@@ -310,4 +310,4 @@ would have got wrong at that pick.
 ## 8. License / contact
 
 Internal client deliverable. Source of canonical implementation:
-`data_pipeline/time_sync.py` in the data_to_frames repository.
+`data_pipeline/time_sync.py` in the data_pipeline repository.

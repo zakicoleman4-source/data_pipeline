@@ -1,4 +1,4 @@
-"""data_to_frames installer — handles the gtsam-not-on-PyPI problem.
+"""data_pipeline installer — handles the gtsam-not-on-PyPI problem.
 
 Run:
     python install.py              # required only (gtsam skipped by default)

@@ -1,22 +1,22 @@
-"""PyInstaller entry script for ``data_to_frames.exe``.
+"""PyInstaller entry script for ``data_pipeline.exe``.
 
 Default behaviour: launch the Tkinter GUI (``data_pipeline.gui.main``).
 
 Subcommands (so the same exe doubles as a CLI on machines without a
 display, in scripts, or for headless end-to-end smoke tests):
 
-    data_to_frames.exe                    -> GUI (default, full UI)
-    data_to_frames.exe wizard             -> client one-click pipeline
-    data_to_frames.exe pipeline ...       -> data_pipeline.pipeline_full.main
-    data_to_frames.exe frames ...         -> data_pipeline.stages.frames.main
-    data_to_frames.exe georef ...      -> data_pipeline.stages.georef.main
-    data_to_frames.exe doctor             -> print resolved external tools
-    data_to_frames.exe viewers compare    -> all-smoothers comparison HTML
-    data_to_frames.exe viewers quality    -> ns + speed + sigma + Q panel
-    data_to_frames.exe viewers diff       -> raw vs cleaned per-epoch diff
-    data_to_frames.exe viewers rtkplot    -> launch bundled rtkplot.exe
+    data_pipeline.exe                    -> GUI (default, full UI)
+    data_pipeline.exe wizard             -> client one-click pipeline
+    data_pipeline.exe pipeline ...       -> data_pipeline.pipeline_full.main
+    data_pipeline.exe frames ...         -> data_pipeline.stages.frames.main
+    data_pipeline.exe georef ...      -> data_pipeline.stages.georef.main
+    data_pipeline.exe doctor             -> print resolved external tools
+    data_pipeline.exe viewers compare    -> all-smoothers comparison HTML
+    data_pipeline.exe viewers quality    -> ns + speed + sigma + Q panel
+    data_pipeline.exe viewers diff       -> raw vs cleaned per-epoch diff
+    data_pipeline.exe viewers rtkplot    -> launch bundled rtkplot.exe
 
-The launcher lives at the repo root (next to ``data_to_frames.spec``)
+The launcher lives at the repo root (next to ``data_pipeline.spec``)
 because PyInstaller treats the spec's first ``scripts`` arg as a
 standalone file with no ``__package__`` context.
 """
@@ -52,7 +52,7 @@ def _route() -> int:
     if len(sys.argv) >= 2 and sys.argv[1] in _SUBCOMMANDS:
         cmd = sys.argv[1]
         # Drop the subcommand from argv so the wrapped CLI sees a clean argv.
-        sys.argv = [f"data_to_frames {cmd}"] + sys.argv[2:]
+        sys.argv = [f"data_pipeline {cmd}"] + sys.argv[2:]
         if cmd in {"--help", "-h"}:
             print(__doc__)
             return 0

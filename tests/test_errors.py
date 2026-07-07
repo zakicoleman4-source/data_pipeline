@@ -85,4 +85,4 @@ def test_report_user_message_includes_followup_instructions():
     msg = report_user_message(err)
     assert "E-PP-100" in msg
     assert "support" in msg.lower()
-    assert ".data_to_frames_last_error.json" in msg
+    assert ".data_pipeline_last_error.json" in msg

@@ -33,7 +33,7 @@ from data_pipeline.traj_score import score_trajectories  # noqa: E402
 # ---------------------------------------------------------------------------
 # Verified inputs (day14 dodge 20260628_190336_677 vs The reference unit GT)
 # ---------------------------------------------------------------------------
-RNX2RTKP = Path(r"C:\Aj\gps\client_pipeline\vendor\rtklib\rnx2rtkp.exe")
+RNX2RTKP = Path(r"C:\Aj\gps\data_pipeline\vendor\rtklib\rnx2rtkp.exe")
 BASE_CONF = Path(
     r"C:\Aj\gps\day14\solved_2026-06-28\dodge\20260628_190336_677\rover.patched.conf"
 )

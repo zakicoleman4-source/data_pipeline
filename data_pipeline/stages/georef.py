@@ -1713,7 +1713,7 @@ def run(
             # CSV importer; they make the file self-describing. Image label is
             # written WITHOUT extension to match source.label (see below).
             g.write(
-                "# the external tool reference CSV (client_pipeline). "
+                "# the external tool reference CSV (data_pipeline). "
                 "Image=camera label (no extension), Latitude/Longitude=WGS84 deg, "
                 "Altitude=m (optional), Accuracy*=1-sigma (m / deg), "
                 "Yaw/Pitch/Roll=deg, Doppler*=m/s. CRS EPSG:4326.\n"

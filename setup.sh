@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# data_to_frames Unix installer wrapper.
+# data_pipeline Unix installer wrapper.
 #   - Resolves python3 on PATH
 #   - Calls install.py which handles pip + gtsam-via-conda fallback
 #
@@ -21,7 +21,7 @@ if ! command -v "$PYTHON_CMD" >/dev/null 2>&1; then
     fi
 fi
 
-echo "=== data_to_frames installer ==="
+echo "=== data_pipeline installer ==="
 "$PYTHON_CMD" "$SCRIPT_DIR/install.py" "$@"
 rc=$?
 

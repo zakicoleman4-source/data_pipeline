@@ -653,7 +653,7 @@ def _cli_rtkplot(argv: list[str]) -> int:
 
 
 def main() -> int:
-    """``data_to_frames-cli.exe viewers <subcmd> ...`` entry."""
+    """``data_pipeline-cli.exe viewers <subcmd> ...`` entry."""
     import argparse
     if len(sys.argv) < 2:
         print("usage: viewers compare|quality|diff|vio|rtkplot ...",

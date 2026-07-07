@@ -79,7 +79,7 @@ test_fixtures/
 app_icon_src.jpg
 build/
 dist/
-data_to_frames.zip
+data_pipeline.zip
 
 # Local-only / internal (never commit)
 CLAUDE.md

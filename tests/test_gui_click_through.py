@@ -40,7 +40,7 @@ pytestmark = pytest.mark.skipif(not _TK_AVAILABLE, reason="No Tk display")
 def app(tmp_path: Path):
     """Construct the App, wait for it to build, yield, then tear down."""
     # Isolate the recent-projects file so the test doesn't leak into the
-    # user's real ``~/.data_to_frames_recent.json``.
+    # user's real ``~/.data_pipeline_recent.json``.
     import data_pipeline.gui as gui_mod
     orig_recent = gui_mod._RECENT_FILE
     gui_mod._RECENT_FILE = tmp_path / "recent.json"

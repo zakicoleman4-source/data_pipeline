@@ -99,7 +99,7 @@ def download(url: str, dest: Path, log) -> bool:
     log(f"  fetch:  {url} -> {dest.name}")
     try:
         req = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (data_to_frames audit)"}
+            url, headers={"User-Agent": "Mozilla/5.0 (data_pipeline audit)"}
         )
         with urllib.request.urlopen(req, timeout=120) as r:
             data = r.read()

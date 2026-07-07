@@ -18,7 +18,7 @@ This module gives every failure point a STABLE CODE
 
 Workers in the GUI catch ``PipelineError`` and:
 1. Show the code + message + hint in a messagebox
-2. Append a structured record to ``~/.data_to_frames_last_error.json``
+2. Append a structured record to ``~/.data_pipeline_last_error.json``
 3. Tell the user "If this keeps happening, send last_error.json to
    support@..."
 
@@ -171,14 +171,14 @@ def _default_report_path() -> Path:
     Lives in the user's home directory so the same path is found on
     every OS and survives across pipeline runs.
     """
-    return Path.home() / ".data_to_frames_last_error.json"
+    return Path.home() / ".data_pipeline_last_error.json"
 
 
 def _version_info() -> dict[str, str]:
     """Lightweight env snapshot embedded into every error report."""
     from . import __version__ as pp_version
     return {
-        "data_to_frames_version": pp_version,
+        "data_pipeline_version": pp_version,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "machine": platform.machine(),

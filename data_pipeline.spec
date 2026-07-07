@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec for client_pipeline (Windows GUI).
-# Build: pyinstaller data_to_frames.spec
-# Output: dist/client_pipeline/  (run dist/client_pipeline/client_pipeline.exe)
+# PyInstaller spec for data_pipeline (Windows GUI).
+# Build: pyinstaller data_pipeline.spec
+# Output: dist/data_pipeline/  (run dist/data_pipeline/data_pipeline.exe)
 
 from pathlib import Path
 from PyInstaller.utils.hooks import (
@@ -55,7 +55,7 @@ binaries += collect_dynamic_libs('numpy')
 binaries += collect_dynamic_libs('scipy')
 
 a = Analysis(
-    ['data_to_frames_launcher.py'],
+    ['data_pipeline_launcher.py'],
     pathex=[str(repo_root)],
     binaries=binaries,
     datas=datas,
@@ -90,7 +90,7 @@ exe_gui = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='client_pipeline',
+    name='data_pipeline',
     icon=str(repo_root / 'app_icon.ico'),
     debug=False,
     bootloader_ignore_signals=False,
@@ -112,7 +112,7 @@ exe_cli = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='client_pipeline-cli',
+    name='data_pipeline-cli',
     icon=str(repo_root / 'app_icon.ico'),
     debug=False,
     bootloader_ignore_signals=False,
@@ -134,5 +134,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='client_pipeline',
+    name='data_pipeline',
 )

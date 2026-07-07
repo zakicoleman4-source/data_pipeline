@@ -1,5 +1,5 @@
 # ============================================================================
-# data_to_frames / data_pipeline runtime dependencies (complete).
+# data_pipeline / data_pipeline runtime dependencies (complete).
 #
 # Install:
 #     pip install -r requirements.txt

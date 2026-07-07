@@ -16,7 +16,7 @@ GUI (multi-tab, per-stage knobs, viewers) still ships for power users.
 Usage:
 
     python -m data_pipeline.wizard               # standalone
-    data_to_frames.exe wizard                     # via PyInstaller launcher
+    data_pipeline.exe wizard                     # via PyInstaller launcher
     data_pipeline.wizard.open_window(parent)     # embed in main GUI
 
 Design notes:
@@ -91,7 +91,7 @@ class _WizardWindow:
         else:
             self.root = tk.Toplevel(parent)
             self._owns_mainloop = False
-        self.root.title("client_pipeline -- One-click PPK pipeline")
+        self.root.title("data_pipeline -- One-click PPK pipeline")
         try:
             self.root.geometry("780x600")
             self.root.minsize(660, 480)

@@ -45,11 +45,11 @@ from .stages import viewers as viewers_stage
 DEFAULT_ANDROID_RINEX_SRC = ""
 
 # Recent-projects persistence file (last 5 RAW folders).
-_RECENT_FILE = Path.home() / ".data_to_frames_recent.json"
+_RECENT_FILE = Path.home() / ".data_pipeline_recent.json"
 _RECENT_MAX = 5
 
 # Per-user GUI preferences (currently: complexity level).
-_SETTINGS_FILE = Path.home() / ".data_to_frames_settings.json"
+_SETTINGS_FILE = Path.home() / ".data_pipeline_settings.json"
 
 # Complexity levels. Each tab declares the minimum level it should appear at;
 # the notebook is filtered against the current setting on every (re)build.
@@ -195,7 +195,7 @@ class App:
         except Exception:
             self.root = tk.Tk()
         from . import __version__
-        self.root.title(f"client_pipeline  v{__version__}")
+        self.root.title(f"data_pipeline  v{__version__}")
         self.root.geometry("1100x900")
         self.root.minsize(960, 720)
 
@@ -336,7 +336,7 @@ class App:
 
         title_box = tk.Frame(hdr, bg=hdr_bg)
         title_box.pack(side="left", padx=20, pady=6, anchor="w")
-        tk.Label(title_box, text="client_pipeline", bg=hdr_bg,
+        tk.Label(title_box, text="data_pipeline", bg=hdr_bg,
                  fg=self._accent,
                  font=("Segoe UI Semibold", 15, "bold")).pack(anchor="w")
         tk.Label(title_box,
@@ -363,7 +363,7 @@ class App:
         #   basic   → just "Media → Samples" (no Reference at all)
         #   medium  → Inputs + Interchange-format + Samples+CSV + Viewers + Media (no Post-processing / no T02)
         #   complex → everything
-        # Persisted in ~/.data_to_frames_settings.json so the choice survives
+        # Persisted in ~/.data_pipeline_settings.json so the choice survives
         # restarts. Default = complex (existing users see no change).
         self._complexity = tk.StringVar(value=_get_complexity())
         complexity_bar = tk.Frame(self.root, bg=self._bg)
@@ -5862,7 +5862,7 @@ class App:
                 f"Need both raw and cleaned .pos.\n\n"
                 f"Looked for cleaned at:\n  {clean}\n\n"
                 "Run the full pipeline (Wizard or "
-                "`client_pipeline-cli.exe pipeline ...`) to produce it.")
+                "`data_pipeline-cli.exe pipeline ...`) to produce it.")
             return
         from .client_viewers import make_ppk_vs_kalman_diff
         out_dir = self._client_viewers_out_dir()

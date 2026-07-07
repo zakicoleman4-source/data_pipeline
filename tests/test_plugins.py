@@ -288,7 +288,7 @@ def test_entry_points_tolerates_none(monkeypatch):
     from data_pipeline import plugin_loader
 
     report = plugin_loader.load_entry_point_plugins()
-    # No client_pipeline.* entry points are installed in the test env, so
+    # No data_pipeline.* entry points are installed in the test env, so
     # nothing loads and (importantly) nothing crashes.
     assert isinstance(report.loaded_entry_points, list)
     # No errors expected purely from "none installed".
