@@ -1,0 +1,2 @@
+# Optional: GeoTIFF basemap for sync_player. Install with: pip install -r requirements-basemap.txt
+rasterio>=1.3.0

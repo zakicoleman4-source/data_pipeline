@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Trajectory comparison</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.4; }
+    #info .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin-right: 6px; font-size: 12px; }
+    #info .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    #info .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    #toolbar { padding: 6px 12px; }
+    #toolbar button { background: #222; color: #ddd; border: 1px solid #444; padding: 6px 10px; margin-right: 6px; cursor: pointer; }
+    #toolbar button:hover { background: #2a2a2a; }
+    #toolbar button.active { background: #2a4a7a; border-color: #4a6a9a; }
+    .plot { width: 100vw; height: calc(100vh - 130px); }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>Trajectory comparison</b> &mdash; toggle individual interpolations in the legend.<br>
+    <span class="pill" id="pill-anchors">anchors: __N__</span>
+    <span class="pill" id="pill-drift">drift: __DRIFT__ ppm</span>
+    <span class="pill ok" id="pill-fit">fit uncertainty: __FIT_MS__ ms</span>
+    <span class="pill" id="pill-rmse">per-anchor RMSE: __RMSE_MS__ ms</span>
+    <span class="pill" id="pill-cubic">cubic-vs-linear gain: __CUBIC_MS__ ms</span>
+    <span class="pill warn" id="pill-rejected">outliers rejected: __NREJ__</span>
+</div>
+<div id="toolbar">
+    <button id="btn3d" class="active">3D</button>
+    <button id="btnTop">Top (orthographic)</button>
+    <button id="btnFront">Front (E-Up)</button>
+    <button id="btnSide">Side (N-Up)</button>
+</div>
+<div id="plot3d" class="plot"></div>
+<script>
+const data3d = __DATA3D__;
+
+const baseLayout = {
+    paper_bgcolor: "#111",
+    plot_bgcolor: "#111",
+    font: { color: "#ddd" },
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    legend: { x: 0, y: 1, bgcolor: "rgba(0,0,0,0.4)" },
+    scene: {
+        aspectmode: "data",
+        xaxis: { title: "East (m)", color: "#ddd", gridcolor: "#333" },
+        yaxis: { title: "North (m)", color: "#ddd", gridcolor: "#333" },
+        zaxis: { title: "Up (m)", color: "#ddd", gridcolor: "#333" },
+        camera: {
+            projection: { type: "perspective" },
+            eye: { x: 1.4, y: 1.4, z: 1.0 },
+            up: { x: 0, y: 0, z: 1 },
+            center: { x: 0, y: 0, z: 0 },
+        },
+    },
+};
+Plotly.newPlot("plot3d", data3d, baseLayout, { responsive: true });
+
+function setActive(id) {
+    document.querySelectorAll("#toolbar button").forEach(b => b.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+}
+function setCamera(projection, eye, up) {
+    Plotly.relayout("plot3d", {
+        "scene.camera.projection.type": projection,
+        "scene.camera.eye": eye,
+        "scene.camera.up": up,
+        "scene.camera.center": { x: 0, y: 0, z: 0 },
+    });
+}
+document.getElementById("btn3d").onclick = function () {
+    setActive("btn3d");
+    setCamera("perspective", { x: 1.4, y: 1.4, z: 1.0 }, { x: 0, y: 0, z: 1 });
+};
+document.getElementById("btnTop").onclick = function () {
+    setActive("btnTop");
+    setCamera("orthographic", { x: 0, y: 0, z: 2.0 }, { x: 0, y: 1, z: 0 });
+};
+document.getElementById("btnFront").onclick = function () {
+    setActive("btnFront");
+    setCamera("orthographic", { x: 0, y: -2.0, z: 0 }, { x: 0, y: 0, z: 1 });
+};
+document.getElementById("btnSide").onclick = function () {
+    setActive("btnSide");
+    setCamera("orthographic", { x: 2.0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+};
+</script>
+</body>
+</html>

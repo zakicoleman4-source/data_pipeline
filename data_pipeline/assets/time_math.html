@@ -1,0 +1,227 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Time-sync math explainer</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #0b0f17; color: #d8e0ee; font-family: sans-serif; }
+    .wrap { display: grid; grid-template-columns: 1fr 380px; gap: 0; min-height: 100vh; }
+    .left  { padding: 12px; }
+    .right { padding: 16px; border-left: 1px solid #1f2937; background: #0f1623; font-size: 12.5px; line-height: 1.55; }
+    h1 { font-size: 15px; margin: 4px 8px 8px; color: #e5e7eb; }
+    h2 { font-size: 13px; margin: 14px 0 4px; color: #93c5fd; }
+    code, pre { background: #1f2937; padding: 1px 5px; border-radius: 3px; color: #e5e7eb; font-family: Consolas, monospace; }
+    pre { padding: 8px; overflow-x: auto; white-space: pre-wrap; font-size: 11.5px; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 1px 8px; margin: 2px 3px 2px 0; font-size: 11px; }
+    .step { margin: 6px 0 10px; padding-left: 8px; border-left: 2px solid #1e40af; }
+    .num { font-weight: 700; color: #fbbf24; }
+    .ok  { color: #34d399; }
+    .warn { color: #f59e0b; }
+    .bad  { color: #f87171; }
+    #plot_main { width: 100%; height: 46vh; }
+    #plot_resid { width: 100%; height: 32vh; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="left">
+    <h1>Time-sync regression &mdash; what the code does, on <em>your</em> data</h1>
+    <div id="plot_main"></div>
+    <h2>residual after the linear fit</h2>
+    <div id="plot_resid"></div>
+</div>
+
+<div class="right">
+    <h2>Inputs</h2>
+    <div class="step">
+        <b>1.</b> Read every line of <code>recording_*.txt</code>.<br>
+        Each row: <code>video_ns, UTC, UTC</code>.<br>
+        <span class="pill">N anchors: <span class="num">__N__</span></span>
+        <span class="pill">span: <span class="num">__SPAN_S__</span> s</span>
+    </div>
+
+    <h2>Centering (numeric stability)</h2>
+    <div class="step">
+        <b>2.</b> <code>video_ns</code> &asymp; 10<sup>12</sup>, <code>utc_s</code> &asymp; 1.7&times;10<sup>9</sup>.
+        Squaring blows precision. Centre both:
+        <pre>x = video_ns - xmean
+y = utc_s   - ymean</pre>
+        <span class="pill">xmean = <span class="num">__XMEAN__</span> ns</span>
+        <span class="pill">ymean = <span class="num">__YMEAN__</span> s</span>
+    </div>
+
+    <h2>OLS slope (drift)</h2>
+    <div class="step">
+        <b>3.</b> Closed form:
+        <pre>slope = &Sigma;(x&middot;y) / &Sigma;(x&middot;x)
+sxx  = &Sigma;(x&middot;x)        ; for &sigma; later</pre>
+        <code>slope &asymp; 1e-9 s/ns</code>. Departure from 1e-9 = camera encoder drifting vs Android system clock.
+        <pre>drift_ppm = (slope&middot;1e9 - 1)&middot;1e6
+          = <span class="num">__DRIFT_PPM__</span> ppm</pre>
+        <span class="warn">~7 ppm typical;</span> over 50 min that&apos;s ~20 ms accumulated &mdash; killed by this slope, not by any single anchor.
+    </div>
+
+    <h2>Robust trim (MAD)</h2>
+    <div class="step">
+        <b>4.</b> Loop up to 3&times;: compute residual MAD, drop anchors &gt; <code>5&times;MAD</code>, refit.
+        Single anchor can be 400 ms off (writer scheduling).
+        <span class="pill">rejected: <span class="num">__NREJ__</span></span>
+    </div>
+
+    <h2>Residuals</h2>
+    <div class="step">
+        <b>5.</b> Per anchor: <code>r_i = y_i &minus; (slope&middot;x_i)</code>.<br>
+        RMSE = jitter the linear model couldn&apos;t absorb (writer cadence).
+        <span class="pill">RMSE: <span class="num">__RMSE_MS__</span> ms</span>
+        <span class="pill">|max|: <span class="num">__MAX_MS__</span> ms</span>
+    </div>
+
+    <h2>Cubic check (non-linearity sniff)</h2>
+    <div class="step">
+        <b>6.</b> Fit degree-3 around mean. Compare RMSE.
+        <pre>cubic_gain = rmse_linear - rmse_cubic
+           = <span class="num">__CUBIC_MS__</span> ms</pre>
+        <span class="ok">cubic_gain &lt;&lt; RMSE &rArr; relationship is linear; OLS is enough.</span>
+    </div>
+
+    <h2>Per-query &sigma;</h2>
+    <div class="step">
+        <b>7.</b> OLS prediction-of-mean variance:
+        <pre>&sigma;(x) = &sigma;<sub>resid</sub>&middot;&radic;(1/n + (x&minus;xmean)&sup2;/sxx)</pre>
+        At centroid <code>x = xmean</code>:
+        <span class="pill">&sigma; @ centroid: <span class="num">__FIT_MS__</span> ms</span><br>
+        Grows quadratically toward span edges &mdash; that&apos;s the orange bowl in the main plot.
+    </div>
+
+    <h2>Per-frame UTC</h2>
+    <div class="step">
+        <b>8.</b> For a frame with PTS <code>t_video_s</code>:
+        <pre>utc_s = ymean + slope&middot;(t_video_s&middot;1e9 - xmean)</pre>
+        Sub-millisecond accuracy as long as you trust the regression, not any single anchor.
+    </div>
+
+    <h2>Where it lives in code</h2>
+    <pre>data_pipeline/time_sync.py
+  fit_time_anchor(path)
+  TimeAnchor.video_pts_to_utc_s()
+  TimeAnchor.fit_uncertainty_s_at()
+  per_anchor_residuals()</pre>
+</div>
+</div>
+
+<script>
+const DATA = __DATA__;
+
+// Top plot: anchor scatter + fit line + ±RMSE band + σ envelope.
+// y-axis is "anchor UTC minus the linear fit's intercept slope·(x−xmean)" but
+// for visualisation we plot (UTC − ymean)·1000 ms vs (video − xmean)/1e9 s
+// so the slope line is visible across the full span.
+const yFitMs = DATA.x_centered_s.map(v => v * DATA.slope_ns_per_ns * 1e3);
+const yAnchorMs = DATA.y_centered_ms;
+const rmseHi = yFitMs.map(v => v + DATA.rmse_ms);
+const rmseLo = yFitMs.map(v => v - DATA.rmse_ms);
+
+const layoutBase = {
+    paper_bgcolor: "#0b0f17",
+    plot_bgcolor:  "#0b0f17",
+    font: { color: "#d8e0ee" },
+    margin: { l: 70, r: 30, t: 30, b: 45 },
+    xaxis: { color: "#cbd5e1", gridcolor: "#1f2937", zerolinecolor: "#374151" },
+    yaxis: { color: "#cbd5e1", gridcolor: "#1f2937", zerolinecolor: "#374151" },
+    legend: { font: { color: "#cbd5e1" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+const mainTraces = [
+    {
+        x: DATA.x_centered_s.concat([...DATA.x_centered_s].reverse()),
+        y: rmseHi.concat([...rmseLo].reverse()),
+        type: "scatter", mode: "lines",
+        fill: "toself", fillcolor: "rgba(52,211,153,0.12)",
+        line: { width: 0 },
+        name: `±RMSE (${DATA.rmse_ms.toFixed(1)} ms)`,
+        hoverinfo: "skip",
+    },
+    {
+        x: DATA.x_centered_s, y: yAnchorMs,
+        type: "scattergl", mode: "markers",
+        marker: { size: 3, color: "#60a5fa", opacity: 0.65 },
+        name: `${DATA.n} anchors (UTC − ymean)`,
+        hovertemplate: "t=%{x:.1f}s y=%{y:+.2f} ms<extra></extra>",
+    },
+    {
+        x: DATA.x_centered_s, y: yFitMs,
+        type: "scatter", mode: "lines",
+        line: { color: "#fbbf24", width: 2 },
+        name: `OLS fit, slope·x  (drift ${DATA.drift_ppm.toFixed(2)} ppm)`,
+    },
+    {
+        x: DATA.unc_t, y: DATA.unc_ms,
+        type: "scatter", mode: "lines",
+        line: { color: "#f59e0b", width: 1, dash: "dot" },
+        name: "1σ fit envelope (×1000 for visibility)",
+        yaxis: "y2",
+        hoverinfo: "skip",
+    },
+];
+
+const mainLayout = {
+    ...layoutBase,
+    title: { text: "anchors vs OLS line  —  (UTC − ymean) in ms, (video − xmean) in s",
+             font: { size: 13, color: "#cbd5e1" } },
+    xaxis: { ...layoutBase.xaxis, title: "video PTS − xmean (s)" },
+    yaxis: { ...layoutBase.yaxis, title: "UTC − ymean (ms)" },
+    yaxis2: {
+        title: "1σ envelope (ms)",
+        overlaying: "y", side: "right",
+        color: "#f59e0b", gridcolor: "transparent",
+        rangemode: "tozero",
+    },
+    annotations: [
+        {
+            x: 0, y: 0, xref: "x", yref: "y",
+            text: "centroid<br>σ minimum",
+            showarrow: true, arrowhead: 2,
+            ax: -40, ay: -40,
+            font: { color: "#f59e0b", size: 11 },
+            bgcolor: "rgba(11,15,23,0.7)",
+        },
+    ],
+};
+Plotly.newPlot("plot_main", mainTraces, mainLayout,
+               { responsive: true, displaylogo: false });
+
+// Bottom plot: residuals.
+const residTraces = [
+    {
+        x: DATA.x_centered_s, y: DATA.resid_ms,
+        type: "scattergl", mode: "markers",
+        marker: { size: 3, color: "#60a5fa", opacity: 0.7 },
+        name: "residual",
+        hovertemplate: "t=%{x:.1f}s  r=%{y:+.2f} ms<extra></extra>",
+    },
+    {
+        x: [DATA.x_centered_s[0], DATA.x_centered_s[DATA.x_centered_s.length - 1]],
+        y: [+DATA.rmse_ms, +DATA.rmse_ms],
+        type: "scatter", mode: "lines",
+        line: { color: "#34d399", width: 1, dash: "dot" },
+        name: `+RMSE`,
+    },
+    {
+        x: [DATA.x_centered_s[0], DATA.x_centered_s[DATA.x_centered_s.length - 1]],
+        y: [-DATA.rmse_ms, -DATA.rmse_ms],
+        type: "scatter", mode: "lines",
+        line: { color: "#34d399", width: 1, dash: "dot" },
+        showlegend: false,
+    },
+];
+const residLayout = {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "video PTS − xmean (s)" },
+    yaxis: { ...layoutBase.yaxis, title: "anchor − fit (ms)" },
+};
+Plotly.newPlot("plot_resid", residTraces, residLayout,
+               { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

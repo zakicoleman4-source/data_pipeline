@@ -1,0 +1,1385 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Video + trajectory player</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0a; color: #ddd; font-family: sans-serif; overflow: hidden; }
+    .grid { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr); grid-template-rows: auto 1fr auto; height: 100vh; }
+    .header { grid-column: 1 / span 2; padding: 6px 12px; background: #111; border-bottom: 1px solid #222; }
+    .video-wrap { background: #000; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+    .video-wrap video { max-width: 100%; max-height: 100%; outline: none; }
+    .plot-wrap { background: #0c0c0c; border-left: 1px solid #222; display: flex; flex-direction: column; min-height: 0; }
+    .plot-3d { flex: 1 1 55%; min-height: 200px; width: 100%; }
+    .plot-sky-wrap { flex: 0 0 auto; max-height: 40%; min-height: 200px; width: 100%; border-top: 1px solid #222; display: none; flex-direction: column; }
+    .plot-sky-wrap.visible { display: flex; }
+    .sky-header { padding: 4px 10px 0; font-size: 12px; color: #8aa; display: flex; align-items: center; gap: 8px; }
+    .sky-header .sky-legend { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    #plot-sky { flex: 1; min-height: 180px; width: 100%; }
+    .plot-map-wrap { flex: 1 1 45%; min-height: 160px; width: 100%; border-top: 1px solid #222; display: none; flex-direction: column; min-height: 0; }
+    .plot-map-wrap.visible { display: flex; }
+    #plot-map { flex: 1; min-height: 140px; width: 100%; }
+    .plot-spectro-wrap { flex: 0 0 auto; max-height: 32%; min-height: 150px; width: 100%; border-top: 1px solid #222; display: none; flex-direction: column; min-height: 0; }
+    .plot-spectro-wrap.visible { display: flex; }
+    .spectro-header { padding: 4px 10px 0; font-size: 12px; color: #8aa; display: flex; align-items: center; gap: 6px; }
+    #plot-spectro { flex: 1; min-height: 120px; width: 100%; }
+    #btn-audio.active { background: #1e3a5f; border-color: #22c55e; color: #22c55e; }
+    #btn-spectro.active { background: #1e3a5f; border-color: #a78bfa; color: #a78bfa; }
+    .controls { grid-column: 1 / span 2; background: #111; border-top: 1px solid #222; padding: 8px 12px; display: flex; align-items: center; gap: 12px; }
+    .controls button { background: #222; color: #ddd; border: 1px solid #444; padding: 6px 10px; cursor: pointer; min-width: 70px; }
+    .controls button:hover { background: #2a2a2a; }
+    .controls input[type=range] { flex: 1; }
+    .controls .clock { font-variant-numeric: tabular-nums; min-width: 220px; font-size: 13px; color: #aaa; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin-right: 6px; font-size: 12px; }
+    .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    .small { font-size: 11px; color: #888; }
+
+    #vel-hud {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        pointer-events: none;
+        user-select: none;
+        display: none;
+        border-radius: 10px;
+        overflow: hidden;
+        box-shadow: 0 0 16px rgba(0,0,0,0.5);
+    }
+    #vel-hud.visible { display: block; }
+    #spd-canvas { display: block; }
+    #btn-hud.active { background: #1e3a5f; border-color: #38b6ff; color: #38b6ff; }
+    #btn-export.active { background: #1e3a5f; border-color: #38b6ff; color: #38b6ff; }
+    #btn-skyline.active { background: #1e3a5f; border-color: #f97316; color: #f97316; }
+
+    .export-panel {
+        display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+        background: #1a1a2e; border: 1px solid #333; border-radius: 12px;
+        padding: 24px 28px; z-index: 1000; min-width: 420px; max-width: 520px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    }
+    .export-panel.visible { display: block; }
+    .export-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:999; }
+    .export-overlay.visible { display:block; }
+    .export-panel h3 { margin: 0 0 12px; font-size: 15px; color: #eee; }
+    .export-panel label { display: block; padding: 8px 12px; margin: 4px 0; border-radius: 6px;
+        cursor: pointer; font-size: 13px; border: 1px solid #333; transition: background 0.15s; }
+    .export-panel label:hover { background: #222; }
+    .export-panel label.selected { background: #1e3a5f; border-color: #38b6ff; }
+    .export-panel .acc-stats { font-size: 11px; color: #888; margin-top: 2px; }
+    .export-panel .acc-stats b { color: #aaa; }
+    .export-panel .btn-row { display: flex; gap: 8px; margin-top: 16px; }
+    .export-panel .btn-row button { flex:1; padding: 8px 0; border-radius: 6px; font-size: 13px;
+        font-weight: 600; cursor: pointer; border: 1px solid #444; }
+    .export-panel .btn-export { background: #22c55e; color: #000; border-color: #16a34a; }
+    .export-panel .btn-export:hover { background: #16a34a; }
+    .export-panel .btn-cancel { background: #222; color: #ddd; }
+    .trust-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div class="grid">
+    <div class="header">
+        <b>Video + trajectory player</b> &mdash; the orange dot is the current frame, the cyan trail is the last 5 s of motion.
+        <span class="small" id="map-hint"></span><br>
+        <span class="pill" id="pill-anchors">anchors: __N__</span>
+        <span class="pill" id="pill-drift">drift: __DRIFT__ ppm</span>
+        <span class="pill ok" id="pill-fit">fit uncertainty: __FIT_MS__ ms</span>
+        <span class="pill" id="pill-rmse">per-anchor RMSE: __RMSE_MS__ ms</span>
+        <span class="pill warn" id="pill-rejected">outliers rejected: __NREJ__</span>
+        <span class="small" id="video-status">waiting for video...</span>
+        <span id="sync-stats-row" style="display:none">
+            <br>
+            <span class="small" style="color:#8aa;font-weight:600">A/V/GNSS sync:</span>
+            <span class="pill" id="pill-av-offset">audio↔video: -- ms</span>
+            <span class="pill" id="pill-audio-drift">audio drift: -- ppm</span>
+            <span class="pill" id="pill-gnss-drift">GNSS drift: -- ppm</span>
+            <span class="pill" id="pill-audio-rmse">audio anchor RMSE: -- ms</span>
+            <span class="pill" id="pill-disc">discontinuities: --</span>
+        </span>
+    </div>
+    <div class="video-wrap">
+        <video id="video" controls preload="metadata" muted></video>
+        <!-- Audio is kept in a separate <audio> element driven from the video's
+             timeupdate so the original video file is never mutated. -->
+        <audio id="audio" preload="metadata"></audio>
+        <div id="vel-hud" class="visible">
+            <canvas id="spd-canvas" width="320" height="230"></canvas>
+        </div>
+    </div>
+    <div class="plot-wrap">
+        <div id="plot-3d" class="plot-3d"></div>
+        <div class="plot-sky-wrap" id="sky-wrap">
+            <div class="sky-header">
+                <b>Skyplot</b>
+                <span style="color:#555; margin:0 2px;">|</span>
+                <span class="sky-legend" style="background:#22c55e"></span><span style="font-size:10px">GPS</span>
+                <span class="sky-legend" style="background:#38bdf8"></span><span style="font-size:10px">GLO</span>
+                <span class="sky-legend" style="background:#a78bfa"></span><span style="font-size:10px">GAL</span>
+                <span class="sky-legend" style="background:#f97316"></span><span style="font-size:10px">BDS</span>
+                <span style="color:#555; margin:0 2px;">|</span>
+                <span class="sky-legend" style="background:#facc15;border:1px solid #fbbf24"></span><span style="font-size:10px">tracked</span>
+                <span class="sky-legend" style="background:#f59e0b;border:1px solid #fbbf24"></span><span style="font-size:10px" title="High-residual / multipath satellites (likely sky obstruction)">obstructed</span>
+                <span id="sky-count" style="margin-left:auto; color:#8aa; font-variant-numeric:tabular-nums;"></span>
+            </div>
+            <div id="plot-sky"></div>
+        </div>
+        <div class="plot-map-wrap" id="map-wrap">
+            <div id="plot-map"></div>
+        </div>
+        <div class="plot-spectro-wrap" id="spectro-wrap">
+            <div class="spectro-header">
+                <b>Audio spectrogram</b>
+                <span style="color:#555; margin:0 4px;">|</span>
+                <span class="small">log power (dB), playhead = current time</span>
+                <span id="spectro-count" style="margin-left:auto; color:#8aa; font-variant-numeric:tabular-nums;"></span>
+            </div>
+            <div id="plot-spectro"></div>
+        </div>
+    </div>
+    <div class="controls">
+        <button id="btn-play">Play</button>
+        <button id="btn-back">-1 s</button>
+        <button id="btn-fwd">+1 s</button>
+        <input type="range" id="seek" min="0" max="1" step="0.001" value="0" />
+        <select id="speed">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="2">2x</option>
+            <option value="4">4x</option>
+            <option value="8">8x</option>
+        </select>
+        <span class="clock" id="clock">00:00:00.000 / 00:00:00.000</span>
+        <button id="btn-hud" class="active" title="Toggle speedometer">Speedo</button>
+        <button id="btn-skyline" title="Toggle building skyline from multipath">Skyline</button>
+        <button id="btn-audio" title="Toggle audio (synced to video)">Audio</button>
+        <button id="btn-spectro" title="Toggle audio spectrogram panel">Spectro</button>
+        <span style="border-left:1px solid #333;height:20px;margin:0 4px"></span>
+        <span style="font-size:11px;color:#888">Sync:</span>
+        <input type="number" id="bias-abs" value="__BIAS_ABS__" min="0" step="1" style="width:55px;background:#1a1a2e;color:#38b6ff;border:1px solid #444;padding:4px 6px;text-align:center;font-size:12px;font-weight:700;border-radius:4px" title="Time offset in ms">
+        <span style="font-size:10px;color:#666">ms</span>
+        <select id="bias-dir" style="background:#1a1a2e;color:#ddd;border:1px solid #444;padding:4px 6px;font-size:11px;border-radius:4px">
+            <option value="1" id="opt-vid-ahead">Video ahead</option>
+            <option value="-1" id="opt-gnss-ahead">GNSS ahead</option>
+        </select>
+        <button id="bias-apply" style="background:#1e3a5f;color:#38b6ff;border:1px solid #38b6ff;padding:4px 10px;font-size:11px;font-weight:600;border-radius:4px">Apply</button>
+        <button id="bias-reset" style="min-width:40px;padding:4px 6px;font-size:11px" title="Reset bias to 0">Reset</button>
+        <span style="border-left:1px solid #333;height:20px;margin:0 4px"></span>
+        <button id="btn-export" title="Export filtered coordinates">Export CSV</button>
+    </div>
+</div>
+
+<div class="export-overlay" id="export-overlay"></div>
+<div class="export-panel" id="export-panel">
+    <h3>Export Coordinates by Accuracy</h3>
+    <div id="export-options"></div>
+    <div class="btn-row">
+        <button class="btn-cancel" id="export-cancel">Cancel</button>
+        <button class="btn-export" id="export-go">Download CSV</button>
+    </div>
+</div>
+
+<script>
+const VIDEO_SRC  = __VIDEO_SRC__;
+const TRAJECTORY = __TRAJECTORY__;
+const META       = __META__;
+const BASEMAP    = __BASEMAP__;
+const SKYPLOT    = __SKYPLOT__;
+const ROT        = __ROT_DEG__;
+const AUDIO_SRC  = __AUDIO_SRC__;    // wav/av-mp4 url (relative) or null
+// Residual audio<->video offset (ms) the player must apply when driving the
+// <audio> clock from the video clock. Sign convention (audio_sync):
+//   offset = (audio_start_utc - video_start_utc) * 1000
+// positive => audio started AFTER video => at video time t the matching audio
+// sample is at (t - offset). 0.0 when the audio src is the muxed AV mp4
+// (offset already baked in via ffmpeg -itsoffset).
+const AUDIO_OFFSET_MS = __AUDIO_OFFSET_MS__;
+const SPECTRO    = __SPECTRO__;      // {power_db, freqs_hz, t_audio_s, utc_s, ...} or null
+const SYNC_STATS = __SYNC_STATS__;   // cross-clock sync diagnostics or null
+// Affine map video PTS (seconds) -> UTC seconds: utc = VUTC.a + VUTC.b * t_video_s.
+// Used to place the spectrogram playhead on the same UTC axis as the trajectory.
+const VUTC       = __VIDEO_UTC_AFFINE__;
+
+const HAS_VEL = TRAJECTORY.length > 0 && TRAJECTORY[0].dop !== undefined;
+const HAS_FLP = HAS_VEL && TRAJECTORY.some(p => p.flp != null);
+
+// Trust v2 coloring
+const TRUST_COL = { high:"#22c55e", pos_only:"#f97316", vel_only:"#3b82f6", low:"#ef4444" };
+const TRUST_NAME = { high:"High (pos+vel)", pos_only:"Position only", vel_only:"Velocity only", low:"Untrusted" };
+const TRUST_ACC = {
+    high:     { h_med:"1.0", h_2s:"3.1", v_med:"0.24", v_2s:"1.18" },
+    pos_only: { h_med:"1.6", h_2s:"6.3", v_med:"0.43", v_2s:"1.9" },
+    vel_only: { h_med:"?",   h_2s:"?",   v_med:"?",    v_2s:"?" },
+    low:      { h_med:"4+",  h_2s:"13+", v_med:"0.9+", v_2s:"2.5+" },
+};
+const traj_trust = TRAJECTORY.map(p => p.trust || "low");
+const traj_colors = traj_trust.map(t => TRUST_COL[t] || "#ef4444");
+
+// ── HUD: digital primary speed + secondary readouts + dual compass ─────────────
+const _canvas = document.getElementById("spd-canvas");
+const _ctx    = _canvas.getContext("2d");
+const _CW = 320, _CH = 230;
+
+// RTKLIB quality palette (also drives the rim around the digital readout).
+const _Q_COL  = { 1:"#22c55e", 2:"#38b6ff", 4:"#f97316", 5:"#ef4444" };
+const _Q_NAME = { 1:"FIX",     2:"FLOAT",   4:"DGPS",    5:"SINGLE"  };
+
+// Source palette (one colour per speed sensor).
+const _SRC = {
+    dop: { col:"#38b6ff", label:"DOPPLER" },   // PPK Doppler — primary
+    crd: { col:"#f59e0b", label:"COORDS Δ" },  // ENU position derivative
+    flp: { col:"#a78bfa", label:"FLP"     },   // Android Fused-Location speed
+};
+
+// Compass widgets (two only — IMU intentionally dropped).
+const _COMPASSES = [
+    { cx: 70,  cy:175, R:36, src:"dop" },
+    { cx:250,  cy:175, R:36, src:"crd" },
+];
+
+function _roundRect(ctx, x, y, w, h, r) {
+    if (ctx.roundRect) ctx.roundRect(x, y, w, h, r);
+    else ctx.rect(x, y, w, h);
+}
+
+// Big LCD-style readout: number centred, colour-rimmed quality ring.
+function _drawDigital(cx, cy, kmh, q) {
+    const ctx = _ctx;
+    const qcol = q ? (_Q_COL[q] || "#666") : "#444";
+
+    // outer plate with quality-coloured rim
+    const w = 220, h = 78;
+    ctx.save();
+    ctx.beginPath(); _roundRect(ctx, cx - w/2, cy - h/2, w, h, 10);
+    const grd = ctx.createLinearGradient(cx, cy - h/2, cx, cy + h/2);
+    grd.addColorStop(0, "rgba(8,12,24,0.95)");
+    grd.addColorStop(1, "rgba(2,4,12,0.95)");
+    ctx.fillStyle = grd; ctx.fill();
+    ctx.strokeStyle = qcol + "cc"; ctx.lineWidth = 2.0; ctx.stroke();
+    // inner glow
+    ctx.shadowColor = qcol + "55"; ctx.shadowBlur = 18;
+    ctx.beginPath(); _roundRect(ctx, cx - w/2 + 2, cy - h/2 + 2, w - 4, h - 4, 8);
+    ctx.strokeStyle = qcol + "33"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.restore();
+
+    // primary digital number — DOPPLER speed
+    ctx.save();
+    const txt = (kmh != null) ? Math.round(kmh).toString() : "--";
+    ctx.font = "bold 56px Consolas, 'Courier New', monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.shadowColor = "#38b6ff66"; ctx.shadowBlur = 10;
+    ctx.fillStyle = kmh != null ? "#e0f2fe" : "rgba(80,90,115,0.7)";
+    ctx.fillText(txt, cx - 22, cy + 4);
+    ctx.restore();
+
+    // km/h unit
+    ctx.fillStyle = "#7c93b8";
+    ctx.font = "bold 11px Arial";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText("km", cx + 50, cy - 8);
+    ctx.fillText("/h", cx + 50, cy + 8);
+
+    // SPEED label top-left of plate
+    ctx.fillStyle = "#5b7095";
+    ctx.font = "bold 9px Arial";
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText("PRIMARY  DOPPLER", cx - w/2 + 8, cy - h/2 + 6);
+
+    // Q chip top-right
+    if (q != null) {
+        const qLabel = _Q_NAME[q] || ("Q=" + q);
+        ctx.font = "bold 10px Arial";
+        const tw = ctx.measureText(qLabel).width + 12;
+        ctx.beginPath(); _roundRect(ctx, cx + w/2 - tw - 6, cy - h/2 + 4, tw, 14, 4);
+        ctx.fillStyle = qcol + "33"; ctx.fill();
+        ctx.strokeStyle = qcol + "99"; ctx.lineWidth = 0.8; ctx.stroke();
+        ctx.fillStyle = qcol;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(qLabel, cx + w/2 - tw/2 - 6, cy - h/2 + 11);
+    }
+}
+
+// Small secondary chip showing one alternate speed source.
+function _drawChip(cx, cy, w, kmh, srcKey, isMissing) {
+    const ctx = _ctx;
+    const src = _SRC[srcKey];
+    const h = 26;
+    ctx.save();
+    ctx.beginPath(); _roundRect(ctx, cx - w/2, cy - h/2, w, h, 5);
+    ctx.fillStyle = "rgba(8,12,24,0.85)"; ctx.fill();
+    ctx.strokeStyle = (isMissing ? "#3a4660" : src.col) + "99";
+    ctx.lineWidth = 1; ctx.stroke();
+    // label
+    ctx.fillStyle = isMissing ? "#4a5a78" : src.col;
+    ctx.font = "bold 9px Arial";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(src.label, cx - w/2 + 6, cy);
+    // value
+    ctx.fillStyle = kmh != null ? "#dde4f0" : "rgba(90,100,125,0.7)";
+    ctx.font = "bold 12px Consolas, monospace";
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    const t = kmh != null ? Math.round(kmh).toString() : "--";
+    ctx.fillText(t, cx + w/2 - 6, cy);
+    ctx.restore();
+}
+
+function _drawCompass(c, az) {
+    const { cx, cy, R, src } = c;
+    const ctx = _ctx;
+    const col = _SRC[src].col;
+
+    // background
+    const bg = ctx.createRadialGradient(cx, cy, R*0.1, cx, cy, R+5);
+    bg.addColorStop(0, "rgba(12,18,36,0.92)"); bg.addColorStop(1, "rgba(4,8,20,0.86)");
+    ctx.beginPath(); ctx.arc(cx, cy, R+4, 0, Math.PI*2);
+    ctx.fillStyle = bg; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, R+4, 0, Math.PI*2);
+    ctx.strokeStyle = col + "55"; ctx.lineWidth = 1; ctx.stroke();
+
+    // ticks (8 directions, N=top)
+    for (let i = 0; i < 8; i++) {
+        const a = i*Math.PI/4 - Math.PI/2;
+        const maj = i%2 === 0;
+        ctx.beginPath();
+        ctx.moveTo(cx+Math.cos(a)*(R-(maj?7:4)), cy+Math.sin(a)*(R-(maj?7:4)));
+        ctx.lineTo(cx+Math.cos(a)*R,             cy+Math.sin(a)*R);
+        ctx.strokeStyle = maj ? "rgba(185,198,222,0.65)" : "rgba(120,135,165,0.35)";
+        ctx.lineWidth = maj ? 1.2 : 0.7; ctx.stroke();
+    }
+
+    // cardinal labels
+    for (const [lbl, a] of [["N",0],["E",Math.PI/2],["S",Math.PI],["W",-Math.PI/2]]) {
+        const ar = a - Math.PI/2;
+        ctx.fillStyle = lbl==="N" ? "#e63535" : "rgba(165,175,200,0.78)";
+        ctx.font = `bold ${Math.round(R*0.28)}px Arial`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(lbl, cx+Math.cos(ar)*(R-9), cy+Math.sin(ar)*(R-9));
+    }
+
+    // needle arrow
+    if (az != null) {
+        const na = az*Math.PI/180 - Math.PI/2;
+        const perp = na + Math.PI/2, bw = 3.5;
+        const nLen = R-6, tLen = 7;
+        const tx = cx + Math.cos(na+Math.PI)*tLen, ty = cy + Math.sin(na+Math.PI)*tLen;
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx+Math.cos(na)*nLen, cy+Math.sin(na)*nLen);
+        ctx.lineTo(tx+Math.cos(perp)*bw, ty+Math.sin(perp)*bw);
+        ctx.lineTo(tx-Math.cos(perp)*bw, ty-Math.sin(perp)*bw);
+        ctx.closePath();
+        ctx.fillStyle = col; ctx.fill();
+        ctx.restore();
+    } else {
+        ctx.fillStyle = "rgba(95,108,135,0.7)";
+        ctx.font = `bold ${Math.round(R*0.45)}px Arial`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("--", cx, cy);
+    }
+
+    // hub
+    ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI*2); ctx.fillStyle = "#7a88b8"; ctx.fill();
+
+    // label below
+    ctx.fillStyle = col + "cc"; ctx.font = `bold ${Math.round(R*0.25)}px Arial`;
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(_SRC[src].label, cx, cy+R+6);
+}
+
+function drawHud(dopKmh, crdKmh, flpKmh, azCrd, azDop, q) {
+    _ctx.clearRect(0, 0, _CW, _CH);
+    // panel tint
+    _ctx.fillStyle = "rgba(4,7,20,0.52)";
+    _ctx.beginPath(); _roundRect(_ctx, 0, 0, _CW, _CH, 10);
+    _ctx.fill();
+    // big digital number (Doppler is primary)
+    _drawDigital(_CW/2, 50, dopKmh, q);
+    // 3-chip secondary row: DOP / CRD / FLP under the big readout
+    _drawChip(80,  108, 88, dopKmh, "dop", dopKmh == null);
+    _drawChip(170, 108, 88, crdKmh, "crd", crdKmh == null);
+    _drawChip(260, 108, 88, flpKmh, "flp", flpKmh == null);
+    // compasses (no IMU)
+    _drawCompass(_COMPASSES[0], azDop);
+    _drawCompass(_COMPASSES[1], azCrd);
+}
+
+drawHud(null, null, null, null, null, null);
+
+// ── Skyplot ───────────────────────────────────────────────────────────────────
+const HAS_SKY = SKYPLOT != null && SKYPLOT.length > 0;
+let _lastSkyIdx = -1;
+
+const _MP_THRESH = 5.0;   // metres — pseudorange residual above this = multipath
+
+// Constellation marker shapes + colors
+const _CON_SHAPE = {
+    G: "circle", R: "diamond", E: "square", C: "triangle-up",
+    J: "star", I: "hexagon", S: "pentagon",
+};
+const _CON_COLOR = {
+    G: "#22c55e", R: "#38bdf8", E: "#a78bfa", C: "#f97316",
+    J: "#facc15", I: "#fb7185", S: "#94a3b8",
+};
+function _satShape(prn) { return _CON_SHAPE[prn[0]] || "circle"; }
+function _satColor(prn, snr) {
+    const base = _CON_COLOR[prn[0]] || "#22c55e";
+    return snr > 30 ? base : base + "99";
+}
+
+if (HAS_SKY) {
+    document.getElementById("sky-wrap").classList.add("visible");
+    document.getElementById("plot-3d").style.flex = BASEMAP ? "1 1 35%" : "1 1 55%";
+
+    const skyLayout = {
+        paper_bgcolor: "#0c0c0c",
+        plot_bgcolor: "#0c0c0c",
+        font: { color: "#999", size: 10 },
+        margin: { l: 24, r: 24, t: 8, b: 8 },
+        showlegend: false,
+        polar: {
+            bgcolor: "#0c0c0c",
+            angularaxis: {
+                direction: "clockwise",
+                rotation: 90,
+                tickvals: [0, 90, 180, 270],
+                ticktext: ["N", "E", "S", "W"],
+                gridcolor: "#1a2a2a",
+                linecolor: "#1a2a2a",
+                color: "#7a9a9a",
+            },
+            radialaxis: {
+                range: [0, 90],
+                tickvals: [0, 30, 60, 90],
+                ticktext: ["90°", "60°", "30°", "0°"],
+                gridcolor: "#1a2a2a",
+                linecolor: "#1a2a2a",
+                color: "#4a6a6a",
+                showline: false,
+            },
+            gridshape: "circular",
+        },
+    };
+
+    // Traces:
+    // 0: heading arrow
+    // 1: solved (green)
+    // 2: tracked (yellow)
+    // 3: multipath (red)
+    Plotly.newPlot("plot-sky", [
+        { type: "scatterpolar", mode: "lines", name: "heading",
+          r: [], theta: [],
+          line: { color: "#38b6ff88", width: 2 },
+          hoverinfo: "skip" },
+        { type: "scatterpolar", mode: "markers+text", name: "solved",
+          r: [], theta: [], text: [], textposition: "top center",
+          textfont: { color: "#b0c4de", size: 9 },
+          marker: { color: [], size: [], symbol: [],
+                    line: { color: "rgba(255,255,255,0.15)", width: 1 },
+                    opacity: 0.9 },
+          hovertemplate: "%{text}<br>El: %{customdata[0]}°  Az: %{customdata[1]}°<br>SNR: %{customdata[2]} dB  Res: %{customdata[3]}m<extra>SOLVED</extra>",
+          customdata: [] },
+        { type: "scatterpolar", mode: "markers+text", name: "tracked",
+          r: [], theta: [], text: [], textposition: "top center",
+          textfont: { color: "#fbbf24", size: 9 },
+          marker: { color: "#fbbf24", size: 7, symbol: "circle-open",
+                    line: { color: "#fbbf24", width: 1.5 },
+                    opacity: 0.7 },
+          hovertemplate: "%{text}<br>El: %{customdata[0]}°  Az: %{customdata[1]}°<br>SNR: %{customdata[2]} dB  Res: %{customdata[3]}m<extra>TRACKED</extra>",
+          customdata: [] },
+        { type: "scatterpolar", mode: "markers+text", name: "multipath",
+          r: [], theta: [], text: [], textposition: "top center",
+          textfont: { color: "#fbbf24", size: 9 },
+          marker: { color: "#f59e0b", size: [], symbol: "circle",
+                    line: { color: "#fbbf24", width: 1.5 },
+                    opacity: 0.85 },
+          hovertemplate: "%{text}<br>El: %{customdata[0]}°  Az: %{customdata[1]}°<br>SNR: %{customdata[2]} dB  Res: %{customdata[3]}m<extra>obstructed</extra>",
+          customdata: [] },
+    ], skyLayout, { responsive: true, displayModeBar: false });
+
+    // Calm placeholder until the first epoch loads (avoids a blank-looking panel).
+    const _skyCount0 = document.getElementById("sky-count");
+    if (_skyCount0 && !_skyCount0.textContent) {
+        _skyCount0.textContent = "waiting for satellites…";
+        _skyCount0.style.color = "#667";
+    }
+}
+
+// Heading arrow: thin line from center outward in driving direction
+function _headingArrow(az) {
+    if (az == null) return { r: [], theta: [] };
+    return {
+        r:     [0, 85, null, 81, 85, null, 81, 85],
+        theta: [az, az, null, az-4, az, null, az+4, az],
+    };
+}
+
+function updateSkyplot(idx) {
+    if (!HAS_SKY) return;
+    const skyIdx = TRAJECTORY[idx].sky;
+    if (skyIdx == null || skyIdx === _lastSkyIdx) return;
+    _lastSkyIdx = skyIdx;
+    const epoch = SKYPLOT[skyIdx];
+    if (!epoch) return;
+
+    const solved   = { r: [], theta: [], text: [], cd: [], sz: [], sym: [], col: [] };
+    const tracked  = { r: [], theta: [], text: [], cd: [] };
+    const mpath    = { r: [], theta: [], text: [], cd: [], sz: [] };
+    let nMp = 0;
+
+    for (const s of epoch.sats) {
+        const isMultipath = s.mp > _MP_THRESH;
+        const snrSize = Math.max(6, Math.min(14, s.snr / 4));
+        if (isMultipath) {
+            mpath.r.push(90 - s.el);
+            mpath.theta.push(s.az);
+            mpath.text.push(s.prn);
+            mpath.cd.push([s.el, s.az, s.snr, s.mp]);
+            mpath.sz.push(snrSize);  // same scale as other sats — don't exaggerate obstruction
+            nMp++;
+        } else if (s.v === 1) {
+            solved.r.push(90 - s.el);
+            solved.theta.push(s.az);
+            solved.text.push(s.prn);
+            solved.cd.push([s.el, s.az, s.snr, s.mp]);
+            solved.sz.push(snrSize);
+            solved.sym.push(_satShape(s.prn));
+            solved.col.push(_satColor(s.prn, s.snr));
+        } else {
+            tracked.r.push(90 - s.el);
+            tracked.theta.push(s.az);
+            tracked.text.push(s.prn);
+            tracked.cd.push([s.el, s.az, s.snr, s.mp]);
+        }
+    }
+
+    const arrow = _headingArrow(epoch.drv);
+
+    Plotly.restyle("plot-sky", {
+        r:     [arrow.r],
+        theta: [arrow.theta],
+    }, [0]);
+    Plotly.restyle("plot-sky", {
+        r:     [solved.r],
+        theta: [solved.theta],
+        text:  [solved.text],
+        customdata: [solved.cd],
+        "marker.color":  [solved.col],
+        "marker.size":   [solved.sz],
+        "marker.symbol": [solved.sym],
+    }, [1]);
+    Plotly.restyle("plot-sky", {
+        r:     [tracked.r],
+        theta: [tracked.theta],
+        text:  [tracked.text],
+        customdata: [tracked.cd],
+    }, [2]);
+    Plotly.restyle("plot-sky", {
+        r:     [mpath.r],
+        theta: [mpath.theta],
+        text:  [mpath.text],
+        customdata: [mpath.cd],
+        "marker.size": [mpath.sz],
+    }, [3]);
+
+    const total = solved.r.length + tracked.r.length + mpath.r.length;
+    const skyEl = document.getElementById("sky-count");
+    if (total === 0) {
+        // No satellites this epoch — stay calm, don't show an alarming empty state.
+        skyEl.textContent = "open sky — no sats this epoch";
+        skyEl.style.color = "#667";
+    } else {
+        // Frame the count positively (sats used for the fix) and treat a little
+        // obstruction as normal: only flag it once it's a meaningful fraction.
+        let label = solved.r.length + " / " + total + " sats used";
+        if (nMp > 0) {
+            const frac = nMp / total;
+            label += "  · " + nMp + " obstructed";
+            // Amber only when obstruction is significant; otherwise keep it neutral.
+            skyEl.style.color = frac >= 0.34 ? "#f59e0b" : "#8aa";
+        } else {
+            skyEl.style.color = "#8aa";
+        }
+        skyEl.textContent = label;
+    }
+
+    // Accumulate multipath history for skyline
+    _skyHistory.push({ sats: epoch.sats, idx: skyIdx });
+    while (_skyHistory.length > 0 && (skyIdx - _skyHistory[0].idx) > _SKY_WINDOW) {
+        _skyHistory.shift();
+    }
+}
+
+// ── Skyline state (functions defined after traj_lat) ─────────────────────────
+const _SKY_BINS = 24;
+const _SKY_WINDOW = 30;
+const _skyHistory = [];
+let _skylineOn = false;
+
+// ── Video + HUD controls ──────────────────────────────────────────────────────
+const video   = document.getElementById("video");
+video.src     = VIDEO_SRC;
+const seek    = document.getElementById("seek");
+const clock   = document.getElementById("clock");
+const speed   = document.getElementById("speed");
+const btnPlay = document.getElementById("btn-play");
+const btnBack = document.getElementById("btn-back");
+const btnFwd  = document.getElementById("btn-fwd");
+const status  = document.getElementById("video-status");
+const mapHint = document.getElementById("map-hint");
+const velHud  = document.getElementById("vel-hud");
+const btnHud  = document.getElementById("btn-hud");
+
+let hudVisible = true;
+if (!HAS_VEL) {
+    velHud.classList.remove("visible");
+    hudVisible = false;
+    btnHud.disabled = true;
+    btnHud.classList.remove("active");
+    btnHud.title = "No velocity data — rebuild sync_player.html";
+}
+btnHud.addEventListener("click", () => {
+    if (!HAS_VEL) return;
+    hudVisible = !hudVisible;
+    velHud.classList.toggle("visible", hudVisible);
+    btnHud.classList.toggle("active", hudVisible);
+    if (hudVisible) drawHud(null, null, null, null, null, null);
+});
+
+// Skyline button setup deferred — needs SHOW_MAP (defined later)
+
+function updateHud(idx) {
+    if (!hudVisible || !HAS_VEL) return;
+    const p   = TRAJECTORY[idx];
+    const dop = p.dop != null ? p.dop * 3.6 : null;
+    const crd = p.crd != null ? p.crd * 3.6 : null;
+    const flp = p.flp != null ? p.flp * 3.6 : null;
+    drawHud(dop, crd, flp,
+            p.az_crd != null ? p.az_crd : null,
+            p.az_dop != null ? p.az_dop : null,
+            p.q      != null ? p.q      : null);
+}
+
+// ── Video rotation ────────────────────────────────────────────────────────────
+function applyVideoRotation() {
+    if (ROT === 0) return;
+    video.style.transform = `rotate(${ROT}deg)`;
+    if (ROT === 90 || ROT === 270) {
+        const wrap = video.parentElement;
+        const cW   = wrap.clientWidth;
+        const cH   = wrap.clientHeight;
+        const vW   = video.videoWidth  || video.clientWidth;
+        const vH   = video.videoHeight || video.clientHeight;
+        if (vW && vH) {
+            const scale = Math.min(cW / vH, cH / vW);
+            video.style.width  = `${vW * scale}px`;
+            video.style.height = `${vH * scale}px`;
+        }
+    }
+}
+
+// ── Basemap / Map panel ───────────────────────────────────────────────────────
+const MAP_IMAGE_URL = BASEMAP ? new URL(BASEMAP.png, window.location.href).href : null;
+const SHOW_MAP = BASEMAP || HAS_SKY;  // show map when basemap or skyplot available
+if (SHOW_MAP) {
+    document.getElementById("map-wrap").classList.add("visible");
+    if (BASEMAP) mapHint.textContent = " Lower panel: trajectory on basemap.";
+    else if (HAS_SKY) mapHint.textContent = " Lower panel: trajectory map.";
+}
+
+// Skyline toggle (needs SHOW_MAP + HAS_SKY)
+const btnSkyline = document.getElementById("btn-skyline");
+if (!HAS_SKY || !SHOW_MAP) {
+    btnSkyline.disabled = true;
+    btnSkyline.title = "No .stat data — skyline requires satellite data";
+} else {
+    btnSkyline.addEventListener("click", () => {
+        _skylineOn = !_skylineOn;
+        btnSkyline.classList.toggle("active", _skylineOn);
+        Plotly.restyle("plot-map", { visible: [_skylineOn, _skylineOn] }, [3, 4]);
+        if (_skylineOn) { lastIdx = -1; updateMarker(); }
+    });
+}
+
+video.addEventListener("loadedmetadata", () => {
+    seek.max = video.duration.toFixed(3);
+    status.textContent = `loaded  (${formatTime(video.duration)})`;
+    applyVideoRotation();
+    redrawPlot();
+});
+video.addEventListener("error", () => {
+    status.textContent = "error loading video — try opening from same folder as the .mp4.";
+});
+window.addEventListener("resize", () => {
+    if (video.videoWidth) applyVideoRotation();
+    if (typeof Plotly === "undefined") return;
+    try { Plotly.Plots.resize("plot-3d"); if (HAS_SKY) Plotly.Plots.resize("plot-sky"); if (SHOW_MAP) Plotly.Plots.resize("plot-map"); } catch (_) {}
+});
+
+function formatTime(s) {
+    if (!isFinite(s)) return "--:--:--.---";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+sec.toFixed(3).padStart(6,"0");
+}
+
+// ── Trajectory ────────────────────────────────────────────────────────────────
+const traj_e   = TRAJECTORY.map(p => p.e);
+const traj_n   = TRAJECTORY.map(p => p.n);
+const traj_u   = TRAJECTORY.map(p => p.u);
+const traj_lon = TRAJECTORY.map(p => p.lon);
+const traj_lat = TRAJECTORY.map(p => p.lat);
+const traj_t   = TRAJECTORY.map(p => p.t_video_s);
+
+const _meanLat = traj_lat.reduce((a,b)=>a+b,0)/traj_lat.length;
+const _cosLat = Math.cos(_meanLat * Math.PI/180);
+const _mPerDegLat = 111111;
+const _mPerDegLon = 111111 * _cosLat;
+
+function _buildSkylineWedges(lon0, lat0, drvAz) {
+    if (!HAS_SKY || _skyHistory.length === 0) return { wx:[], wy:[], hx:[], hy:[] };
+    const binStep = 360 / _SKY_BINS;
+    const maxMpEl = new Float64Array(_SKY_BINS);
+    for (const h of _skyHistory) {
+        for (const s of h.sats) {
+            if (s.mp <= _MP_THRESH) continue;
+            const b = Math.floor(((s.az % 360) + 360) % 360 / binStep) % _SKY_BINS;
+            if (s.el > maxMpEl[b]) maxMpEl[b] = s.el;
+        }
+    }
+    const SCALE = 0.5, wx = [], wy = [], halfBin = binStep / 2;
+    for (let b = 0; b < _SKY_BINS; b++) {
+        const buildEl = Math.min(maxMpEl[b], 55);
+        if (buildEl < 3) continue;
+        const dist = buildEl * SCALE;
+        const azCenter = b * binStep + halfBin;
+        const az1 = (azCenter - halfBin + 1) * Math.PI / 180;
+        const az2 = (azCenter + halfBin - 1) * Math.PI / 180;
+        wx.push(lon0); wy.push(lat0);
+        for (let a = az1; a <= az2; a += 3 * Math.PI / 180) {
+            wx.push(lon0 + dist * Math.sin(a) / _mPerDegLon);
+            wy.push(lat0 + dist * Math.cos(a) / _mPerDegLat);
+        }
+        wx.push(lon0 + dist * Math.sin(az2) / _mPerDegLon);
+        wy.push(lat0 + dist * Math.cos(az2) / _mPerDegLat);
+        wx.push(lon0); wy.push(lat0);
+        wx.push(null); wy.push(null);
+    }
+    const hx = [], hy = [];
+    if (drvAz != null) {
+        const ha = drvAz * Math.PI / 180;
+        hx.push(lon0, lon0 + 20 * Math.sin(ha) / _mPerDegLon);
+        hy.push(lat0, lat0 + 20 * Math.cos(ha) / _mPerDegLat);
+    }
+    return { wx, wy, hx, hy };
+}
+
+const layout3d = {
+    paper_bgcolor:"#0c0c0c", plot_bgcolor:"#0c0c0c",
+    font:{color:"#ddd"}, margin:{l:0,r:0,t:0,b:0},
+    legend:{x:0,y:1,bgcolor:"rgba(0,0,0,0.4)"},
+    scene:{
+        aspectmode:"data",
+        xaxis:{title:"East (m)",  color:"#ddd",gridcolor:"#222"},
+        yaxis:{title:"North (m)",color:"#ddd",gridcolor:"#222"},
+        zaxis:{title:"Up (m)",   color:"#ddd",gridcolor:"#222"},
+        camera:{projection:{type:"orthographic"},eye:{x:0,y:0,z:2},up:{x:0,y:1,z:0},center:{x:0,y:0,z:0}},
+    },
+};
+
+const trailLen = 5.0;
+let lastIdx = -1;
+
+function padRange(lo,hi,frac){const s=Math.max(hi-lo,1e-9)*frac;return[lo-s,hi+s];}
+
+function buildMapLayout() {
+    let [minLon,maxLon]=[Math.min(...traj_lon),Math.max(...traj_lon)];
+    let [minLat,maxLat]=[Math.min(...traj_lat),Math.max(...traj_lat)];
+    if (BASEMAP) {
+        minLon = Math.min(minLon, BASEMAP.west);
+        maxLon = Math.max(maxLon, BASEMAP.east);
+        minLat = Math.min(minLat, BASEMAP.south);
+        maxLat = Math.max(maxLat, BASEMAP.north);
+    }
+    let [x0,x1]=padRange(minLon,maxLon,0.05);
+    let [y0,y1]=padRange(minLat,maxLat,0.05);
+    const layout = {
+        paper_bgcolor:"#0c0c0c",plot_bgcolor:"#0c0c0c",font:{color:"#ddd"},
+        margin:{l:48,r:8,t:8,b:40},legend:{x:0,y:1,bgcolor:"rgba(0,0,0,0.4)"},
+        xaxis:{title:"lon",color:"#ddd",gridcolor:"#222",range:[x0,x1],zeroline:false},
+        yaxis:{title:"lat",color:"#ddd",gridcolor:"#222",range:[y0,y1],scaleanchor:"x",scaleratio:_cosLat,zeroline:false},
+    };
+    if (BASEMAP) {
+        layout.images = [{source:MAP_IMAGE_URL,xref:"x",yref:"y",x:BASEMAP.west,y:BASEMAP.south,
+                 sizex:BASEMAP.east-BASEMAP.west,sizey:BASEMAP.north-BASEMAP.south,
+                 sizing:"stretch",layer:"below",opacity:1}];
+    }
+    return layout;
+}
+
+// Build per-segment color array for line coloring (Plotly line.color array).
+// For scatter3d lines, color array length = n points, Plotly interpolates segments.
+function redrawPlot() {
+    Plotly.react("plot-3d", [
+        {type:"scatter3d",mode:"lines",name:"trajectory",
+         x:traj_e,y:traj_n,z:traj_u,
+         line:{color:traj_colors,width:4},
+         hoverinfo:"skip"},
+        {type:"scatter3d",mode:"lines",name:"trail",
+         x:[],y:[],z:[],line:{color:"#22d3ee",width:6},hoverinfo:"skip"},
+        {type:"scatter3d",mode:"markers",name:"now",
+         x:[traj_e[0]],y:[traj_n[0]],z:[traj_u[0]],
+         marker:{color:"#fb923c",size:6,symbol:"diamond"},
+         text:[TRAJECTORY[0].image||""],hovertemplate:"%{text}<extra></extra>"},
+    ], layout3d, {responsive:true});
+    if (SHOW_MAP) {
+        Plotly.react("plot-map", [
+            {type:"scatter",mode:"markers",name:"trajectory",x:traj_lon,y:traj_lat,
+             marker:{color:traj_colors,size:3,opacity:0.85},
+             hoverinfo:"skip"},
+            {type:"scatter",mode:"lines",name:"trail",x:[],y:[],
+             line:{color:"#22d3ee",width:4},hoverinfo:"skip"},
+            {type:"scatter",mode:"markers",name:"now",x:[traj_lon[0]],y:[traj_lat[0]],
+             marker:{color:"#fb923c",size:10,symbol:"diamond"},
+             text:[TRAJECTORY[0].image||""],hovertemplate:"%{text}<extra></extra>"},
+            {type:"scatter",mode:"lines",name:"skyline",
+             x:[],y:[],fill:"toself",
+             fillcolor:"rgba(249,115,22,0.12)",
+             line:{color:"rgba(249,115,22,0.35)",width:1},
+             hoverinfo:"skip",visible:false},
+            {type:"scatter",mode:"lines",name:"heading",
+             x:[],y:[],
+             line:{color:"#38b6ff",width:2,dash:"dot"},
+             hoverinfo:"skip",visible:false},
+        ], buildMapLayout(), {responsive:true});
+    }
+}
+
+let _biasMs = __BIAS_MS__;  // video-GNSS bias in milliseconds (+ = video ahead of GNSS)
+
+function findIdx(t) {
+    let lo=0,hi=traj_t.length-1;
+    if(t<=traj_t[0])return 0; if(t>=traj_t[hi])return hi;
+    while(lo+1<hi){const mid=(lo+hi)>>1;if(traj_t[mid]<=t)lo=mid;else hi=mid;}
+    return lo;
+}
+
+function updateMarker() {
+    if (!traj_t.length) return;
+    const t=video.currentTime + _biasMs / 1000, idx=findIdx(t);
+    if (idx===lastIdx) return;
+    lastIdx=idx;
+    const i0=findIdx(Math.max(traj_t[0],t-trailLen));
+    Plotly.restyle("plot-3d",{
+        x:[traj_e.slice(i0,idx+1),[traj_e[idx]]],
+        y:[traj_n.slice(i0,idx+1),[traj_n[idx]]],
+        z:[traj_u.slice(i0,idx+1),[traj_u[idx]]],
+        text:[null,[TRAJECTORY[idx].image||""]],
+    },[1,2]);
+    if (SHOW_MAP) {
+        const p = TRAJECTORY[idx];
+        if (_skylineOn && HAS_SKY) {
+            const drvAz = p.az_dop != null ? p.az_dop : p.az_crd;
+            const sky = _buildSkylineWedges(p.lon, p.lat, drvAz);
+            Plotly.restyle("plot-map",{
+                x:[traj_lon.slice(i0,idx+1),[traj_lon[idx]], sky.wx, sky.hx],
+                y:[traj_lat.slice(i0,idx+1),[traj_lat[idx]], sky.wy, sky.hy],
+                text:[null,[p.image||""], null, null],
+            },[1,2,3,4]);
+        } else {
+            Plotly.restyle("plot-map",{
+                x:[traj_lon.slice(i0,idx+1),[traj_lon[idx]]],
+                y:[traj_lat.slice(i0,idx+1),[traj_lat[idx]]],
+                text:[null,[p.image||""]],
+            },[1,2]);
+        }
+    }
+    updateHud(idx);
+    updateSkyplot(idx);
+}
+
+video.addEventListener("timeupdate",()=>{
+    if(!isFinite(video.duration))return;
+    seek.value=video.currentTime.toFixed(3);
+    const biasStr = _biasMs !== 0 ? `  [bias: ${_biasMs > 0 ? "+" : ""}${_biasMs} ms]` : "";
+    clock.textContent=formatTime(video.currentTime)+" / "+formatTime(video.duration) + biasStr;
+    updateMarker();
+});
+seek.addEventListener("input",()=>{video.currentTime=parseFloat(seek.value);});
+btnPlay.addEventListener("click",()=>{
+    if(video.paused){video.play();btnPlay.textContent="Pause";}
+    else{video.pause();btnPlay.textContent="Play";}
+});
+btnBack.addEventListener("click",()=>{video.currentTime=Math.max(0,video.currentTime-1);});
+btnFwd.addEventListener("click",()=>{video.currentTime=Math.min(video.duration||0,video.currentTime+1);});
+speed.addEventListener("change",()=>{video.playbackRate=parseFloat(speed.value);});
+document.addEventListener("keydown",(e)=>{
+    if(e.code==="Space"){e.preventDefault();btnPlay.click();}
+    else if(e.code==="ArrowLeft")video.currentTime=Math.max(0,video.currentTime-(e.shiftKey?5:0.1));
+    else if(e.code==="ArrowRight")video.currentTime=Math.min(video.duration||0,video.currentTime+(e.shiftKey?5:0.1));
+});
+
+// ── Bias controls ────────────────────────────────────────────────────────────
+const _biasAbs = document.getElementById("bias-abs");
+const _biasDir = document.getElementById("bias-dir");
+
+// Init UI from __BIAS_MS__ value
+if (_biasMs < 0) {
+    _biasAbs.value = Math.abs(_biasMs);
+    _biasDir.value = "-1";
+} else {
+    _biasAbs.value = Math.abs(_biasMs);
+    _biasDir.value = "1";
+}
+
+function _applyBias() {
+    const abs = Math.abs(parseInt(_biasAbs.value) || 0);
+    const sign = parseInt(_biasDir.value);
+    _biasMs = abs * sign;
+    _biasAbs.value = abs;
+    lastIdx = -1;
+    updateMarker();
+}
+document.getElementById("bias-apply").addEventListener("click", _applyBias);
+_biasAbs.addEventListener("change", _applyBias);
+_biasDir.addEventListener("change", _applyBias);
+document.getElementById("bias-reset").addEventListener("click", () => {
+    _biasMs = 0;
+    _biasAbs.value = 0;
+    _biasDir.value = "1";
+    lastIdx = -1;
+    updateMarker();
+});
+
+// ── Export panel ─────────────────────────────────────────────────────────────
+const _exportPanel = document.getElementById("export-panel");
+const _exportOverlay = document.getElementById("export-overlay");
+const _exportOpts = document.getElementById("export-options");
+const _btnExport = document.getElementById("btn-export");
+let _exportFilter = "high";
+
+// Count epochs per label
+const _trustCounts = { high:0, pos_only:0, vel_only:0, low:0 };
+traj_trust.forEach(t => _trustCounts[t]++);
+
+const _EXPORT_PRESETS = [
+    { key:"high", label:"High confidence only",
+      desc:`Coordinates ≤ 3.1 m and velocity ≤ 1.2 m/s at 2σ (validated 10 sessions)`,
+      filter: t => t === "high" },
+    { key:"high_pos", label:"High + Position trusted",
+      desc:`Coordinates ≤ 6.3 m at 2σ — velocity NOT guaranteed above 1.2 m/s`,
+      filter: t => t === "high" || t === "pos_only" },
+    { key:"all", label:"All epochs (no filtering)",
+      desc:`Raw output — no accuracy guarantee`,
+      filter: () => true },
+];
+
+function _buildExportOptions() {
+    _exportOpts.innerHTML = "";
+    for (const p of _EXPORT_PRESETS) {
+        const n = TRAJECTORY.filter((_,i) => p.filter(traj_trust[i])).length;
+        const pct = (100 * n / TRAJECTORY.length).toFixed(1);
+        const col = p.key === "high" ? TRUST_COL.high : p.key === "high_pos" ? TRUST_COL.pos_only : "#888";
+        const lbl = document.createElement("label");
+        lbl.dataset.key = p.key;
+        if (p.key === _exportFilter) lbl.classList.add("selected");
+        lbl.innerHTML =
+            `<input type="radio" name="export-filter" value="${p.key}" ${p.key===_exportFilter?"checked":""} style="margin-right:8px">` +
+            `<span class="trust-dot" style="background:${col}"></span>` +
+            `<b>${p.label}</b> — ${n.toLocaleString()} epochs (${pct}%)` +
+            `<div class="acc-stats">${p.desc}</div>`;
+        lbl.querySelector("input").addEventListener("change", () => {
+            _exportFilter = p.key;
+            _exportOpts.querySelectorAll("label").forEach(l => l.classList.remove("selected"));
+            lbl.classList.add("selected");
+        });
+        _exportOpts.appendChild(lbl);
+    }
+}
+
+function _showExport() {
+    _buildExportOptions();
+    _exportPanel.classList.add("visible");
+    _exportOverlay.classList.add("visible");
+}
+function _hideExport() {
+    _exportPanel.classList.remove("visible");
+    _exportOverlay.classList.remove("visible");
+}
+
+function _doExport() {
+    const preset = _EXPORT_PRESETS.find(p => p.key === _exportFilter);
+    if (!preset) return;
+
+    const header = "t_video_s,lat,lon,h_m,e_m,n_m,u_m,trust_label";
+    const hasVel = HAS_VEL;
+    const hdr = hasVel
+        ? header + ",speed_dop_mps,speed_crd_mps,az_dop_deg,az_crd_deg,q,ns"
+        : header;
+
+    const rows = [hdr];
+    for (let i = 0; i < TRAJECTORY.length; i++) {
+        if (!preset.filter(traj_trust[i])) continue;
+        const p = TRAJECTORY[i];
+        let row = [p.t_video_s, p.lat, p.lon, p.h, p.e, p.n, p.u, traj_trust[i]];
+        if (hasVel) {
+            row.push(
+                p.dop != null ? p.dop : "",
+                p.crd != null ? p.crd : "",
+                p.az_dop != null ? p.az_dop : "",
+                p.az_crd != null ? p.az_crd : "",
+                p.q != null ? p.q : "",
+                p.ns != null ? p.ns : ""
+            );
+        }
+        rows.push(row.join(","));
+    }
+
+    const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `trajectory_${_exportFilter}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    _hideExport();
+}
+
+_btnExport.addEventListener("click", _showExport);
+document.getElementById("export-cancel").addEventListener("click", _hideExport);
+document.getElementById("export-go").addEventListener("click", _doExport);
+_exportOverlay.addEventListener("click", _hideExport);
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Audio + spectrogram + sync-stats (additive — independent of trajectory logic)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── video-PTS -> UTC helper (matches the trajectory's UTC axis) ────────────────
+function videoToUtc(tVideoS) {
+    if (VUTC && isFinite(VUTC.a) && isFinite(VUTC.b)) return VUTC.a + VUTC.b * tVideoS;
+    return null;
+}
+
+// ── Audio playback locked to the video clock ──────────────────────────────────
+const audio = document.getElementById("audio");
+const btnAudio = document.getElementById("btn-audio");
+const HAS_AUDIO = !!AUDIO_SRC;
+let _audioOn = false;
+const _AUDIO_DRIFT_TOL = 0.08; // re-seek audio if it slips > 80 ms from video
+
+if (!HAS_AUDIO) {
+    btnAudio.disabled = true;
+    btnAudio.title = "No audio track available for this session";
+} else {
+    audio.src = AUDIO_SRC;
+    btnAudio.addEventListener("click", () => {
+        _audioOn = !_audioOn;
+        btnAudio.classList.toggle("active", _audioOn);
+        audio.muted = !_audioOn;
+        if (_audioOn) {
+            // The video stays muted; the <audio> element carries sound so the
+            // original .mp4 is never modified. Keep the two clocks aligned.
+            audio.currentTime = _audioTargetTime();
+            if (!video.paused) audio.play().catch(() => {});
+        } else {
+            audio.pause();
+        }
+    });
+    // Drive the audio clock from the video clock.
+    video.addEventListener("play",  () => { if (_audioOn) { _syncAudioTime(true); audio.play().catch(() => {}); } });
+    video.addEventListener("pause", () => { audio.pause(); });
+    video.addEventListener("seeking",   () => { _syncAudioTime(true); });
+    video.addEventListener("ratechange", () => { audio.playbackRate = video.playbackRate; });
+}
+
+// Audio-element time matching the current video time, with the measured
+// audio<->video offset applied (see AUDIO_OFFSET_MS above). Clamped at 0 for
+// video times before the audio recording started.
+function _audioTargetTime() {
+    return Math.max(0, video.currentTime - AUDIO_OFFSET_MS / 1000);
+}
+
+function _syncAudioTime(force) {
+    if (!HAS_AUDIO || !_audioOn) return;
+    const target = _audioTargetTime();
+    const drift = Math.abs(audio.currentTime - target);
+    if (force || drift > _AUDIO_DRIFT_TOL) {
+        try { audio.currentTime = target; } catch (_) {}
+    }
+}
+
+// ── Spectrogram panel ─────────────────────────────────────────────────────────
+const btnSpectro = document.getElementById("btn-spectro");
+const spectroWrap = document.getElementById("spectro-wrap");
+const HAS_SPECTRO = !!(SPECTRO && SPECTRO.power_db && SPECTRO.power_db.length);
+let _spectroOn = false;
+let _spectroT = [];          // x-axis the heatmap is drawn against (video seconds)
+let _spectroDrawn = false;
+
+if (!HAS_SPECTRO) {
+    btnSpectro.disabled = true;
+    btnSpectro.title = "No spectrogram — rebuild sync_player.html with a WAV";
+} else {
+    btnSpectro.addEventListener("click", () => {
+        _spectroOn = !_spectroOn;
+        btnSpectro.classList.toggle("active", _spectroOn);
+        spectroWrap.classList.toggle("visible", _spectroOn);
+        if (_spectroOn) { _drawSpectro(); _updateSpectroPlayhead(); }
+    });
+}
+
+function _spectroXAxis() {
+    // Prefer the spectrogram's own UTC axis converted back to video seconds so
+    // the playhead lines up exactly with the video clock; otherwise fall back
+    // to the audio-relative seconds axis.
+    if (SPECTRO.utc_s && VUTC && isFinite(VUTC.b) && VUTC.b !== 0) {
+        return SPECTRO.utc_s.map(u => (u - VUTC.a) / VUTC.b);
+    }
+    return SPECTRO.t_audio_s;
+}
+
+function _drawSpectro() {
+    if (!HAS_SPECTRO || _spectroDrawn) return;
+    _spectroT = _spectroXAxis();
+    const data = [{
+        type: "heatmap",
+        z: SPECTRO.power_db,            // [n_freq][n_time]
+        x: _spectroT,
+        y: SPECTRO.freqs_hz,
+        colorscale: "Viridis",
+        zsmooth: "best",
+        colorbar: { thickness: 8, len: 0.9, tickfont: { size: 9, color: "#aaa" } },
+        hovertemplate: "t=%{x:.2f}s  f=%{y:.0f}Hz  %{z:.0f}dB<extra></extra>",
+    }];
+    const layout = {
+        margin: { l: 44, r: 8, t: 6, b: 26 },
+        paper_bgcolor: "#0c0c0c", plot_bgcolor: "#0c0c0c",
+        font: { color: "#aaa", size: 10 },
+        xaxis: { title: { text: "time (s)", font: { size: 10 } }, color: "#aaa" },
+        yaxis: { title: { text: "Hz", font: { size: 10 } }, color: "#aaa" },
+        shapes: [{
+            type: "line", xref: "x", yref: "paper",
+            x0: 0, x1: 0, y0: 0, y1: 1,
+            line: { color: "#f97316", width: 2 },
+        }],
+    };
+    Plotly.newPlot("plot-spectro", data, layout, { responsive: true, displayModeBar: false });
+    document.getElementById("spectro-count").textContent =
+        `${SPECTRO.n_time}×${SPECTRO.n_freq} bins · ${(SPECTRO.sample_rate/1000).toFixed(1)} kHz`;
+    _spectroDrawn = true;
+}
+
+function _updateSpectroPlayhead() {
+    if (!_spectroOn || !_spectroDrawn) return;
+    const t = video.currentTime + _biasMs / 1000;
+    Plotly.relayout("plot-spectro", { "shapes[0].x0": t, "shapes[0].x1": t });
+}
+
+// ── Sync-stats panel ──────────────────────────────────────────────────────────
+function _fmt(v, suffix, nd) {
+    if (v === null || v === undefined || !isFinite(v)) return "n/a";
+    return v.toFixed(nd === undefined ? 2 : nd) + (suffix || "");
+}
+if (SYNC_STATS) {
+    document.getElementById("sync-stats-row").style.display = "";
+    const s = SYNC_STATS;
+    const setPill = (id, txt, warn) => {
+        const el = document.getElementById(id);
+        el.textContent = txt;
+        if (warn) el.classList.add("warn");
+    };
+    setPill("pill-av-offset",
+        "audio↔video: " + _fmt(s.audio_video_offset_ms, " ms", 1),
+        s.audio_video_offset_ms != null && Math.abs(s.audio_video_offset_ms) > 50);
+    setPill("pill-audio-drift", "audio drift: " + _fmt(s.audio_drift_ppm, " ppm", 1));
+    setPill("pill-gnss-drift",  "GNSS drift: " + _fmt(s.gnss_drift_ppm, " ppm", 1));
+    setPill("pill-audio-rmse",  "audio anchor RMSE: " + _fmt(s.audio_anchor_rmse_ms, " ms", 2));
+    const disc = (s.audio_discontinuities || 0) + (s.gnss_discontinuities || 0);
+    setPill("pill-disc", "discontinuities: " + disc, disc > 0);
+}
+
+// ── Hook playhead + audio drift correction into the existing timeupdate ────────
+video.addEventListener("timeupdate", () => {
+    _syncAudioTime(false);
+    _updateSpectroPlayhead();
+});
+window.addEventListener("resize", () => {
+    if (typeof Plotly === "undefined") return;
+    try { if (_spectroOn) Plotly.Plots.resize("plot-spectro"); } catch (_) {}
+});
+</script>
+
+<!-- ── Sensor-trust panel (IMU vs turns + audio) ─────────────────────────── -->
+<div id="imuTrust" style="position:fixed;left:0;right:0;bottom:0;background:#0b0b0b;
+     border-top:1px solid #222;z-index:9998;font-family:sans-serif;color:#ddd;display:none;">
+  <div style="display:flex;align-items:center;gap:12px;padding:4px 10px;background:#111;">
+    <b style="font-size:12px;">IMU trust</b>
+    <span id="imuTrustBadges" style="font-size:11px;"></span>
+    <button id="imuTrustToggle" style="margin-left:auto;background:#222;color:#ddd;
+      border:1px solid #444;padding:2px 8px;cursor:pointer;font-size:11px;">Whole timeline</button>
+    <button id="imuTrustHide" style="background:#222;color:#ddd;border:1px solid #444;
+      padding:2px 8px;cursor:pointer;font-size:11px;">hide</button>
+  </div>
+  <div style="display:flex;gap:8px;height:300px;padding:6px;box-sizing:border-box;">
+    <div id="imuBox" style="width:300px;flex:none;background:#080808;border:1px solid #1c1c1c;"></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:6px;min-width:0;">
+      <div id="imuYaw" style="flex:1;min-height:0;"></div>
+      <div id="imuAcc" style="flex:1;min-height:0;"></div>
+    </div>
+  </div>
+</div>
+<button id="imuTrustShow" style="position:fixed;right:10px;bottom:10px;z-index:9999;
+  background:#1f2937;color:#ddd;border:1px solid #374151;border-radius:6px;
+  padding:4px 10px;cursor:pointer;font-size:12px;">sensors</button>
+
+<script>
+(function(){
+  const IMU_STRIP = __IMU_STRIP__;
+  const showBtn = document.getElementById('imuTrustShow');
+  if (IMU_STRIP === null) { if (showBtn) showBtn.style.display='none'; return; }
+
+  const T = IMU_STRIP.t_video, N = T.length;
+  const WIN = 30;                 // local window, seconds
+  let whole = false;
+
+  const badges = document.getElementById('imuTrustBadges');
+  const f = IMU_STRIP.flags;
+  const dead = f.gyro_dead;
+  const VC={GOOD:'#064e3b',OK:'#78350f',WEAK:'#7f1d1d',DEAD:'#7f1d1d'};
+  const vd=f.verdict||'WEAK';
+  badges.innerHTML =
+    `<span style="padding:1px 7px;border-radius:8px;font-weight:600;background:${VC[vd]};">${vd}</span> `+
+    `<span style="padding:1px 6px;border-radius:8px;background:${dead?'#7f1d1d':'#064e3b'};">gyro ${dead?'DEAD':'alive'}</span> `+
+    (f.corr!=null?`<span style="color:#9ca3af;">corr ${f.corr.toFixed(2)}</span> `:'')+
+    (f.drift_max_deg!=null?`<span style="color:#9ca3af;">drift&le;${f.drift_max_deg.toFixed(0)}&deg;</span> `:'')+
+    (f.vel_source==='coords'?`<span style="color:#f59e0b;">heading from positions</span> `:'')+
+    `<span style="color:#6b7280;">${IMU_STRIP.note}</span>`;
+
+  const resolved = IMU_STRIP.flags.mount_resolved;
+  function baseLayout(title){
+    return {paper_bgcolor:'#0b0b0b',plot_bgcolor:'#0b0b0b',font:{color:'#bbb',size:10},
+      margin:{l:46,r:8,t:24,b:20},showlegend:true,
+      legend:{orientation:'h',y:1.12,x:0,font:{size:9},bgcolor:'rgba(0,0,0,0)'},
+      title:{text:title,font:{size:11,color:'#cbd5e1'},x:0.01,xanchor:'left',y:0.98,yanchor:'top'},
+      xaxis:{gridcolor:'#161616',color:'#888',zeroline:false},
+      yaxis:{gridcolor:'#161616',zeroline:true,zerolinecolor:'#3a3a3a',color:'#888'},
+      shapes:[{type:'line',x0:T[0],x1:T[0],yref:'paper',y0:0,y1:1,
+               line:{color:'#fb923c',width:1.5}}]};
+  }
+  const CFG={responsive:true,displaylogo:false};
+  // Strip 1 — gyro obvious: measured yaw-rate (green, bold) vs trajectory (orange)
+  Plotly.newPlot('imuYaw',[
+    {x:T,y:IMU_STRIP.yaw_meas_dps,mode:'lines',name:'gyro yaw-rate',line:{color:'#7fffb3',width:1.6}},
+    {x:T,y:IMU_STRIP.turn_traj_dps,mode:'lines',name:'trajectory turn',line:{color:'#f59e0b',width:1.3}},
+  ],baseLayout('Yaw-rate (deg/s) — gyro vs trajectory'),CFG);
+  // Strip 2 — precise g-forces (gravity removed, vehicle frame)
+  const accTraces = resolved ? [
+    {x:T,y:IMU_STRIP.fwd_accel,mode:'lines',name:'forward (accel/brake)',line:{color:'#22c55e',width:1.4}},
+    {x:T,y:IMU_STRIP.lat_accel,mode:'lines',name:'lateral (cornering)',line:{color:'#22d3ee',width:1.4}},
+  ] : [{x:T,y:IMU_STRIP.accel_mag,mode:'lines',name:'|accel|',line:{color:'#ffb37f',width:1}}];
+  const accTitle = resolved
+    ? `Linear accel (m/s2) - forward + lateral  (mounting ${(IMU_STRIP.flags.mount_conf||0).toFixed(2)})`
+    : 'Accel magnitude (m/s2) - mounting unresolved';
+  Plotly.newPlot('imuAcc', accTraces, baseLayout(accTitle), CFG);
+
+  // ── Top-down, north-up compass: box = gyro heading, needle = trajectory ──
+  function bvec(deg){const th=deg*Math.PI/180;return [Math.sin(th),Math.cos(th)];} // ->(E,N)=(x,y)
+  function boxPoly(headDeg){
+    const th=headDeg*Math.PI/180;
+    const fwd=[Math.sin(th),Math.cos(th)], rgt=[Math.cos(th),-Math.sin(th)];
+    const L=0.62,W=0.30;
+    const body=[[L,W],[L,-W],[-L,-W],[-L,W],[L,W]];
+    const nose=[[L,W],[L+0.20,0],[L,-W]];
+    const map=c=>[c.map(p=>p[0]*fwd[0]+p[1]*rgt[0]), c.map(p=>p[0]*fwd[1]+p[1]*rgt[1])];
+    const b=map(body), n=map(nose);
+    return {bx:b[0],by:b[1],nx:n[0],ny:n[1],fwd,rgt};
+  }
+  const compassShapes=[
+    {type:'circle',xref:'x',yref:'y',x0:-1,y0:-1,x1:1,y1:1,line:{color:'#2a2a2a',width:1}},
+    {type:'circle',xref:'x',yref:'y',x0:-0.5,y0:-0.5,x1:0.5,y1:0.5,line:{color:'#1a1a1a',width:1}},
+    {type:'line',x0:0,y0:-1,x1:0,y1:1,line:{color:'#1a1a1a',width:1}},
+    {type:'line',x0:-1,y0:0,x1:1,y1:0,line:{color:'#1a1a1a',width:1}},
+  ];
+  const compassAnn=[
+    {x:0,y:1.14,text:'N',showarrow:false,font:{color:'#cbd5e1',size:13}},
+    {x:1.14,y:0,text:'E',showarrow:false,font:{color:'#777',size:11}},
+    {x:0,y:-1.14,text:'S',showarrow:false,font:{color:'#777',size:11}},
+    {x:-1.14,y:0,text:'W',showarrow:false,font:{color:'#777',size:11}},
+  ];
+  const boxLayout={paper_bgcolor:'#080808',plot_bgcolor:'#080808',showlegend:false,
+    margin:{l:6,r:6,t:22,b:6},
+    title:{text:'Vehicle heading — gyro (box) vs trajectory (needle), N up',
+           font:{size:10.5,color:'#cbd5e1'},x:0.03,xanchor:'left'},
+    xaxis:{range:[-1.3,1.3],visible:false,fixedrange:true},
+    yaxis:{range:[-1.3,1.3],visible:false,fixedrange:true,scaleanchor:'x',scaleratio:1},
+    shapes:compassShapes,annotations:compassAnn};
+  function boxTraces(i){
+    const bh=IMU_STRIP.box_head_deg[i], th=IMU_STRIP.traj_head_deg[i];
+    const useH=(bh!=null)?bh:(th!=null?th:0);
+    const bp=boxPoly(useH);
+    const tr=[
+      {x:bp.bx,y:bp.by,mode:'lines',fill:'toself',fillcolor:'rgba(127,255,179,0.10)',
+       line:{color:'#7fffb3',width:2.5},hoverinfo:'skip'},
+      {x:bp.nx,y:bp.ny,mode:'lines',fill:'toself',fillcolor:'#7fffb3',
+       line:{color:'#7fffb3',width:1},hoverinfo:'skip'},
+    ];
+    if(th!=null){const v=bvec(th);tr.push({x:[0,v[0]],y:[0,v[1]],mode:'lines',
+      line:{color:'#f59e0b',width:2,dash:'dot'},hoverinfo:'skip'});}
+    if(resolved){const fw=IMU_STRIP.fwd_accel[i],la=IMU_STRIP.lat_accel[i];
+      if(fw!=null&&la!=null){const s=0.11;
+        const gx=(fw*s)*bp.fwd[0]+(la*s)*bp.rgt[0], gy=(fw*s)*bp.fwd[1]+(la*s)*bp.rgt[1];
+        tr.push({x:[gx],y:[gy],mode:'markers',
+          marker:{size:11,color:fw>=0?'#22c55e':'#ef4444',line:{color:'#fff',width:1}},hoverinfo:'skip'});}
+    }
+    if(bh!=null && th!=null){
+      const bv=bvec(bh), tvv=bvec(th);
+      tr.push({x:[0,bv[0],tvv[0],0],y:[0,bv[1],tvv[1],0],mode:'lines',
+        fill:'toself',fillcolor:'rgba(245,158,11,0.18)',line:{color:'rgba(245,158,11,0.4)',width:1},hoverinfo:'skip'});
+      let d=((bh-th)+180)%360-180;
+      boxLayout.title.text='Vehicle heading - gyro vs trajectory (N up)  drift '+(d>=0?'+':'')+d.toFixed(1)+' deg';
+    }
+    return tr;
+  }
+  function drawBox(i){ Plotly.react('imuBox', boxTraces(i), boxLayout, CFG); }
+  if(!resolved){
+    document.getElementById('imuTrustBadges').innerHTML +=
+      ' <span style="color:#f59e0b;">mounting unknown - accel unsigned</span>';
+  }
+
+  function findIdx(tt){let lo=0,hi=N-1;if(tt<=T[0])return 0;if(tt>=T[hi])return hi;
+    while(lo+1<hi){const m=(lo+hi)>>1;if(T[m]<=tt)lo=m;else hi=m;}return lo;}
+
+  function currentT(){
+    const v=document.getElementById('video');
+    if (v && isFinite(v.currentTime)) return v.currentTime;
+    const s=document.getElementById('seek');
+    return s?parseFloat(s.value):T[0];
+  }
+  function update(){
+    const t=currentT();
+    const relayout={'shapes[0].x0':t,'shapes[0].x1':t};
+    if (!whole){ relayout['xaxis.range']=[t-WIN/2,t+WIN/2]; }
+    else { relayout['xaxis.range']=[T[0],T[N-1]]; }
+    Plotly.relayout('imuYaw',relayout);
+    Plotly.relayout('imuAcc',relayout);
+    drawBox(findIdx(t));
+  }
+  const vid=document.getElementById('video');
+  if (vid){ vid.addEventListener('timeupdate',update); vid.addEventListener('seeked',update); }
+  const seekEl=document.getElementById('seek');
+  if (seekEl) seekEl.addEventListener('input',update);
+
+  document.getElementById('imuTrustToggle').addEventListener('click',e=>{
+    whole=!whole; e.target.textContent=whole?'Local 30 s':'Whole timeline'; update();
+  });
+  function open(){ document.getElementById('imuTrust').style.display='block';
+    showBtn.style.display='none'; setTimeout(update,50); }
+  function close(){ document.getElementById('imuTrust').style.display='none';
+    showBtn.style.display='block'; }
+  showBtn.addEventListener('click',open);
+  document.getElementById('imuTrustHide').addEventListener('click',close);
+})();
+</script>
+</body>
+</html>

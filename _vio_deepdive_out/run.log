@@ -1,0 +1,26 @@
+[   0.0s] parsing rover.pos (device PPK) and Javad GT
+[   0.1s] rover.pos: 1412 epochs; Javad GT: 1917 epochs
+[   0.1s] RAW PPK vs Javad: {'n': 1400, 'median_offset_m': 1.611, 'two_sigma_m': 6.0529, 'max_m': 11.3913, 'le1m_pct': 27.57, 'rmse_m': 2.8175}
+[   0.1s] recording_*.txt is empty (C:\Aj\gps\day14\dodge\20260628_190336_677\recording_20260628_190336_677.txt); synthesizing a recording_map from video_anchor.txt + measurements Fix-row boot->UTC bridge
+[   0.3s] [bridge] time_sync bridge unavailable (PipelineError).
+[   0.3s] [bridge] GNSS boot->UTC derived locally from 1414 measurements Fix rows (recording.txt empty and Raw ChipsetElapsedRealtimeNanos=0).
+[   0.3s] [bridge] boot->UTC anchor source = measurements-fix-fallback, n=1414, rmse_s=0.0003
+[   0.3s] [bridge] video_t0_boottime_ns (frame 0) = 2541859675000
+[   0.5s] [bridge] synthesized recording_map: 42298 (video_ns, utc) rows -> C:\Aj\gps\client_pipeline\_vio_deepdive_out\synthesized_recording_map.txt
+[   0.5s] parsing sensors_*.txt (gyro-aided VO)
+[   1.5s] sensors: 280914 rows
+[   1.5s] running run_vio_multiframe_v2 (frame_decim_hz=4.0) -- this can take several minutes
+[   1.6s] [vio-v2] time anchor: n=42298 drift=+4.26ppm
+[   1.7s] [vio-v2] video 1920x1080 29.92fps keep_every=7 track_len=5 buckets=8x6 em_method=MAGSAC
+[ 352.9s] [vio-v2] samples=2883 with_valid_t=2883 fb_dropped=1990826
+[ 352.9s] VIO samples: 2883
+[ 352.9s] VIO samples with finite t_unit_cam: 2883/2883
+[ 352.9s] vio_to_enu_velocities (auto_calibrate=True)
+[ 352.9s] [vio] auto-calibrated R_body_from_cam, p50 residual 46.09°
+[ 352.9s] [vio] WARN calibration residual > 20°; device mount likely changed mid-session — VIO output unreliable.
+[ 352.9s] [vio] scaled 1221/2883 samples to ENU velocities
+[ 352.9s] VIO ENU velocity samples: 1221
+[ 352.9s] VIO-speed vs PPK-Doppler-speed correlation: 0.899
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 353.0s] VIO-fused vs Javad: {'n': 1400, 'median_offset_m': 2.1411, 'two_sigma_m': 11.5186, 'max_m': 31.9718, 'le1m_pct': 17.79, 'rmse_m': 5.1442}
+[ 353.0s] done

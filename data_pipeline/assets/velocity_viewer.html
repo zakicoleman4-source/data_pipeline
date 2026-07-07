@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Velocity viewer</title>
+<script src="plotly.min.js"></script>
+<style>
+  html,body{margin:0;padding:0;background:#0a0a0a;color:#ddd;font-family:sans-serif;height:100%;}
+  #header{padding:7px 14px;background:#111;border-bottom:1px solid #222;font-size:13px;}
+  #header b{font-size:14px;}
+  .pill{display:inline-block;background:#1f2937;border:1px solid #374151;border-radius:999px;
+        padding:2px 10px;margin:0 4px;font-size:11px;}
+  .ok{background:#064e3b;border-color:#065f46;color:#d1fae5;}
+  .warn{background:#78350f;border-color:#b45309;color:#fde68a;}
+  #plots{display:flex;flex-direction:column;height:calc(100vh - 48px);}
+  .pane{flex:1;min-height:0;}
+</style>
+</head>
+<body>
+<div id="header">
+  <b>Velocity viewer</b> &mdash;
+  Doppler speed (PPK carrier-phase rate, device angle irrelevant) vs coordinate-derived speed (ENU position diff/dt).
+  Disagreement = |Doppler&minus;Coords|: large values predict coordinate outliers.
+  &nbsp;
+  <span class="pill" id="p-n"></span>
+  <span class="pill ok" id="p-fix"></span>
+  <span class="pill warn" id="p-float"></span>
+  <span class="pill" id="p-single"></span>
+</div>
+<div id="plots">
+  <div class="pane" id="plot-speed"></div>
+  <div class="pane" id="plot-az"></div>
+</div>
+<script>
+const D = __VELOCITY_DATA__;
+// D: {t, dop, crd, flp, disag, az, q}  — all same-length arrays
+const HAS_FLP = Array.isArray(D.flp) && D.flp.some(v => v != null);
+
+const Q_COLOR = {1:"#22c55e", 2:"#38b6ff", 4:"#f97316", 5:"#ef4444"};
+const Q_NAME  = {1:"Fix", 2:"Float", 4:"Single", 5:"Degraded"};
+
+// pill counts
+const nFix   = D.q.filter(q=>q===1).length;
+const nFloat = D.q.filter(q=>q===2).length;
+const nSingle= D.q.filter(q=>q>=4).length;
+document.getElementById("p-n").textContent = `n = ${D.t.length} epochs`;
+document.getElementById("p-fix").textContent   = `Fix: ${nFix}`;
+document.getElementById("p-float").textContent = `Float: ${nFloat}`;
+document.getElementById("p-single").textContent= `Single/degraded: ${nSingle}`;
+
+// marker colors per epoch
+const mColors = D.q.map(q => Q_COLOR[q] || "#888");
+
+const BG = "#0a0a0a", PAPER = "#111", GRID = "#1e1e1e";
+const baseLayout = {
+  paper_bgcolor: PAPER, plot_bgcolor: BG,
+  font:{color:"#ccc", size:11},
+  margin:{l:56,r:16,t:28,b:40},
+  legend:{bgcolor:"rgba(0,0,0,0.5)", bordercolor:"#333", borderwidth:1},
+  xaxis:{gridcolor:GRID, zerolinecolor:"#333", title:"Session time (s)", color:"#aaa"},
+};
+
+// ── Speed panel ───────────────────────────────────────────────────────────────
+const trDop = {
+  x:D.t, y:D.dop, type:"scatter", mode:"lines",
+  name:"Doppler speed  sqrt(vn²+ve²)",
+  line:{color:"#38b6ff", width:1.2},
+};
+const trCrd = {
+  x:D.t, y:D.crd, type:"scatter", mode:"lines",
+  name:"Coords speed  ENU diff/dt",
+  line:{color:"#ff5c5c", width:1.0, dash:"dot"},
+};
+const trDisag = {
+  x:D.t, y:D.disag, type:"scatter", mode:"lines",
+  name:"|Doppler − Coords|  disagreement",
+  line:{color:"#f59e0b", width:1.0},
+  fill:"tozeroy", fillcolor:"rgba(245,158,11,0.06)",
+};
+const trQdots = {
+  x:D.t, y:D.dop, type:"scatter", mode:"markers",
+  name:"Quality class",
+  marker:{color:mColors, size:3, opacity:0.55},
+  hovertemplate:"t=%{x:.1f}s  D=%{y:.2f}m/s<extra></extra>",
+};
+const trFlp = HAS_FLP ? {
+  x:D.t, y:D.flp, type:"scatter", mode:"lines",
+  name:"FLP speed  (Android Fused-Location, IMU-blended)",
+  line:{color:"#a78bfa", width:1.2, dash:"dash"},
+  connectgaps:false,
+} : null;
+
+Plotly.newPlot("plot-speed",
+  [trDop, trCrd, ...(trFlp ? [trFlp] : []), trDisag, trQdots],
+  Object.assign({}, baseLayout, {
+    title:{text:"Speed over session (m/s)", font:{color:"#eee",size:12}, x:0.01, xanchor:"left"},
+    yaxis:{gridcolor:GRID, zerolinecolor:"#333", title:"Speed (m/s)", color:"#aaa"},
+  }),
+  {responsive:true, displayModeBar:false}
+);
+
+// ── Azimuth panel ─────────────────────────────────────────────────────────────
+const trAz = {
+  x:D.t, y:D.az, type:"scatter", mode:"markers",
+  name:"Doppler azimuth  atan2(ve,vn)",
+  marker:{color:mColors, size:2.5, opacity:0.7},
+  hovertemplate:"t=%{x:.1f}s  az=%{y:.1f}°<extra></extra>",
+};
+
+Plotly.newPlot("plot-az",
+  [trAz],
+  Object.assign({}, baseLayout, {
+    title:{text:"Driving azimuth from Doppler velocity (0°=North, clockwise)", font:{color:"#eee",size:12}, x:0.01, xanchor:"left"},
+    yaxis:{gridcolor:GRID, zerolinecolor:"#333", title:"Azimuth (°)", range:[0,360],
+           tickvals:[0,45,90,135,180,225,270,315,360],
+           ticktext:["0 N","45 NE","90 E","135 SE","180 S","225 SW","270 W","315 NW","360"],
+           color:"#aaa"},
+    margin:{l:70,r:16,t:28,b:40},
+  }),
+  {responsive:true, displayModeBar:false}
+);
+
+window.addEventListener("resize",()=>{
+  Plotly.Plots.resize("plot-speed");
+  Plotly.Plots.resize("plot-az");
+});
+</script>
+</body>
+</html>

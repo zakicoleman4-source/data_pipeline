@@ -1,0 +1,86 @@
+[   0.0s] parsing rover.pos (device PPK) and Javad GT
+[   0.1s] RAW PPK vs Javad: {'n': 1400, 'median_offset_m': 1.611, 'two_sigma_m': 6.0529, 'max_m': 11.3913, 'le1m_pct': 27.57, 'rmse_m': 2.8175}
+[   0.1s] reusing existing synthesized recording_map: C:\Aj\gps\client_pipeline\_vio_deepdive_out\synthesized_recording_map.txt
+[   1.1s] sensors: 280914 rows
+[   1.1s] running run_vio_multiframe_v2 (frame_decim_hz=4.0) -- ONE-TIME ~6 min run, then cached for all round-2 variants
+[   1.2s] [vio-v2] time anchor: n=42298 drift=+4.26ppm
+[   1.4s] [vio-v2] video 1920x1080 29.92fps keep_every=7 track_len=5 buckets=8x6 em_method=MAGSAC
+[ 369.6s] [vio-v2] samples=2883 with_valid_t=2883 fb_dropped=1990826
+[ 369.6s] cached 2883 VIO samples -> C:\Aj\gps\client_pipeline\_vio_deepdive_out\vio_samples_cache.pkl
+[ 369.6s] VIO samples: 2883 (2883 with finite t_unit_cam)
+[ 369.6s] variant: wahba_min_speed_1.5
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 369.7s]   -> {'name': 'wahba_min_speed_1.5', 'residual_deg': 44.95752005033022, 'fused_max_m': 32.1034, 'two_sigma_m': 11.5033, 'median_offset_m': 2.139, 'n': 1400, 'n_vio_vels': 1221, 'speed_corr': 0.8962989593138221, 'R': array([[ 0.01804051, -0.33804195,  0.94095812],
+       [ 0.99983726,  0.00609944, -0.01697813],
+       [ 0.        ,  0.94111128,  0.33809697]])}
+[ 369.7s] variant: wahba_min_speed_2.5
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 369.8s]   -> {'name': 'wahba_min_speed_2.5', 'residual_deg': 44.99250412698556, 'fused_max_m': 32.0868, 'two_sigma_m': 11.4857, 'median_offset_m': 2.1392, 'n': 1400, 'n_vio_vels': 1221, 'speed_corr': 0.8973235408280161, 'R': array([[ 0.02789534, -0.34573042,  0.93791915],
+       [ 0.99961085,  0.00964802, -0.02617376],
+       [ 0.        ,  0.93828428,  0.34586501]])}
+[ 369.8s] variant: wahba_min_speed_5
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 369.9s]   -> {'name': 'wahba_min_speed_5', 'residual_deg': 44.17250292112072, 'fused_max_m': 32.0096, 'two_sigma_m': 11.5086, 'median_offset_m': 2.143, 'n': 1400, 'n_vio_vels': 1221, 'speed_corr': 0.8991591037663483, 'R': array([[ 0.03622809, -0.36010412,  0.93220842],
+       [ 0.99934355,  0.01305445, -0.03379431],
+       [ 0.        ,  0.93282078,  0.36034067]])}
+[ 369.9s] variant: wahba_min_speed_8
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 369.9s]   -> {'name': 'wahba_min_speed_8', 'residual_deg': 42.02886094388564, 'fused_max_m': 31.9453, 'two_sigma_m': 11.5606, 'median_offset_m': 2.1489, 'n': 1400, 'n_vio_vels': 1221, 'speed_corr': 0.9000792221133833, 'R': array([[ 0.03524636, -0.36759212,  0.92931896],
+       [ 0.99937865,  0.01296434, -0.03277548],
+       [ 0.        ,  0.92989675,  0.36782067]])}
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.0s] variant: fixedR_yaw-10_pitch-10_roll-10 -> max_m=33.809 residual=44.461168271727836
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.1s] variant: fixedR_yaw-10_pitch-10_roll+0 -> max_m=33.5679 residual=44.231698438449335
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.2s] variant: fixedR_yaw-10_pitch-10_roll+10 -> max_m=33.2867 residual=44.073453513349406
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.2s] variant: fixedR_yaw-10_pitch+0_roll-10 -> max_m=34.1157 residual=44.813942978047116
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.3s] variant: fixedR_yaw-10_pitch+0_roll+0 -> max_m=34.0705 residual=43.29969045153115
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.4s] variant: fixedR_yaw-10_pitch+0_roll+10 -> max_m=33.9867 residual=43.62744991945817
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.5s] variant: fixedR_yaw-10_pitch+10_roll-10 -> max_m=33.9483 residual=50.52721612868479
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.6s] variant: fixedR_yaw-10_pitch+10_roll+0 -> max_m=34.103 residual=50.76779942801027
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.7s] variant: fixedR_yaw-10_pitch+10_roll+10 -> max_m=34.2105 residual=49.26801196444032
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.8s] variant: fixedR_yaw+0_pitch-10_roll-10 -> max_m=33.217 residual=43.79462326819217
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.8s] variant: fixedR_yaw+0_pitch-10_roll+0 -> max_m=32.9604 residual=43.475253612169354
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 370.9s] variant: fixedR_yaw+0_pitch-10_roll+10 -> max_m=32.7378 residual=43.73486848436369
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.0s] variant: fixedR_yaw+0_pitch+0_roll-10 -> max_m=33.5272 residual=42.357494028416546
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.1s] variant: fixedR_yaw+0_pitch+0_roll+0 -> max_m=33.4959 residual=42.357494028416546
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.2s] variant: fixedR_yaw+0_pitch+0_roll+10 -> max_m=33.4457 residual=42.357494028416546
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.2s] variant: fixedR_yaw+0_pitch+10_roll-10 -> max_m=33.3715 residual=49.67828195362356
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.3s] variant: fixedR_yaw+0_pitch+10_roll+0 -> max_m=33.5242 residual=49.80170144509951
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.4s] variant: fixedR_yaw+0_pitch+10_roll+10 -> max_m=33.6552 residual=49.8354802821427
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.5s] variant: fixedR_yaw+10_pitch-10_roll-10 -> max_m=32.3511 residual=43.44556166790708
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.6s] variant: fixedR_yaw+10_pitch-10_roll+0 -> max_m=32.1194 residual=44.119661282131325
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.6s] variant: fixedR_yaw+10_pitch-10_roll+10 -> max_m=31.8935 residual=43.717407928034405
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.7s] variant: fixedR_yaw+10_pitch+0_roll-10 -> max_m=32.6722 residual=43.27005819604555
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.8s] variant: fixedR_yaw+10_pitch+0_roll+0 -> max_m=32.65 residual=43.23254476921399
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 371.9s] variant: fixedR_yaw+10_pitch+0_roll+10 -> max_m=32.6037 residual=44.32273893793136
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 372.0s] variant: fixedR_yaw+10_pitch+10_roll-10 -> max_m=32.54 residual=49.19126411263648
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 372.0s] variant: fixedR_yaw+10_pitch+10_roll+0 -> max_m=32.6851 residual=50.70543594882897
+[fuse] blended 530/1411 epoch intervals with >=1 VIO velocity sample
+[ 372.1s] variant: fixedR_yaw+10_pitch+10_roll+10 -> max_m=32.8329 residual=51.407821300820856
+[ 372.1s] BEST variant: fixedR_yaw+10_pitch-10_roll+10 fused_max_m=31.8935 residual_deg=43.717407928034405
+[ 372.1s] done

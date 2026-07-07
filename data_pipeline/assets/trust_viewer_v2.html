@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>Trust Viewer v2 — Multi-Signal Confidence</title>
+<script src="plotly.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, sans-serif; background:#111; color:#eee; }
+
+  /* --- Header --- */
+  .header { padding:14px 24px; background:#1a1a2e; display:flex; flex-wrap:wrap; align-items:center; gap:16px; border-bottom:1px solid #2a2a4e; }
+  .header h1 { margin:0; font-size:18px; font-weight:700; letter-spacing:0.02em; }
+  .pills { display:flex; gap:8px; flex-wrap:wrap; }
+  .pill { display:inline-flex; align-items:center; gap:6px; padding:5px 14px; border-radius:6px; font-size:13px; font-weight:600; }
+  .pill .dot { width:8px; height:8px; border-radius:50%; }
+  .guarantee { margin-left:auto; font-size:11px; color:#888; max-width:360px; line-height:1.4; }
+
+  /* --- Panels --- */
+  .top-row { display:grid; grid-template-columns:1fr 1fr; height:42vh; }
+  .panel { background:#1a1a2e; margin:2px; min-height:0; }
+
+  .timeline-strip { height:60px; margin:2px; background:#1a1a2e; position:relative; }
+  .timeline-strip canvas { width:100%; height:100%; display:block; }
+  .timeline-label { position:absolute; top:2px; left:10px; font-size:11px; color:#888; pointer-events:none; }
+
+  .signal-grid { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; height:calc(55vh - 180px); min-height:240px; }
+  .signal-panel { background:#1a1a2e; margin:2px; min-height:0; }
+
+  .footer { padding:10px 24px; background:#1a1a2e; border-top:1px solid #2a2a4e; font-size:11px; color:#777; text-align:center; }
+</style>
+</head><body>
+
+<div class="header">
+  <h1>Trust Viewer v2</h1>
+  <div class="pills" id="kpi-pills"></div>
+  <div class="guarantee" id="guarantee-text"></div>
+</div>
+
+<div class="top-row">
+  <div id="plot3d" class="panel"></div>
+  <div id="plot2d" class="panel"></div>
+</div>
+
+<div class="timeline-strip">
+  <span class="timeline-label">Timeline (colored by trust label)</span>
+  <canvas id="timeline-canvas"></canvas>
+</div>
+
+<div class="signal-grid">
+  <div id="sig0" class="signal-panel"></div>
+  <div id="sig1" class="signal-panel"></div>
+  <div id="sig2" class="signal-panel"></div>
+  <div id="sig3" class="signal-panel"></div>
+</div>
+
+<div class="footer" id="footer">
+  Green epochs: position ≤ 10 m and velocity ≤ 1.2 m/s at 2-sigma confidence. Validated against survey-grade Javad GNSS across 10 driving sessions. Trust labels computed from per-epoch quality signals — no reference required.
+</div>
+
+<script>
+const D = __DATA__;
+
+const COLORS = {
+  high:     "#22c55e",
+  vel_only: "#3b82f6",
+  pos_only: "#f97316",
+  low:      "#ef4444"
+};
+const LABEL_NAMES = {
+  high:     "High (pos+vel)",
+  vel_only: "Velocity only",
+  pos_only: "Position only",
+  low:      "Low (neither)"
+};
+
+// --- KPI pills ---
+const pillData = [
+  { key:"high",     n:D.n_high,     bg:"#166534", border:"#22c55e" },
+  { key:"vel_only", n:D.n_vel_only, bg:"#1e3a5f", border:"#3b82f6" },
+  { key:"pos_only", n:D.n_pos_only, bg:"#7c2d12", border:"#f97316" },
+  { key:"low",      n:D.n_low,      bg:"#7f1d1d", border:"#ef4444" }
+];
+let pillsHTML = "";
+for (const p of pillData) {
+  const pct = D.n_total > 0 ? (100 * p.n / D.n_total).toFixed(1) : "0.0";
+  pillsHTML += `<span class="pill" style="background:${p.bg};border:1px solid ${p.border}">` +
+    `<span class="dot" style="background:${COLORS[p.key]}"></span>` +
+    `${LABEL_NAMES[p.key]}: ${p.n} (${pct}%)</span>`;
+}
+document.getElementById("kpi-pills").innerHTML = pillsHTML;
+
+const highPct = D.n_total > 0 ? (100 * D.n_high / D.n_total).toFixed(1) : "0.0";
+document.getElementById("guarantee-text").textContent =
+  `${D.n_total} epochs total | ${highPct}% fully trusted | ` +
+  `Green = position ≤ 10 m + velocity ≤ 1.2 m/s at 2σ. Validated on 10 sessions vs survey-grade GNSS.`;
+
+// --- Color arrays ---
+const colors = D.labels.map(l => COLORS[l]);
+const hoverText = D.labels.map((l, i) =>
+  `t=${D.t[i].toFixed(1)}s | pos=${D.pos_score[i].toFixed(3)} vel=${D.vel_score[i].toFixed(3)}<br>${LABEL_NAMES[l]}`
+);
+
+// --- 3D ENU scatter ---
+Plotly.newPlot("plot3d", [{
+  type: "scatter3d", mode: "markers",
+  x: D.e, y: D.n, z: D.u,
+  marker: { color: colors, size: 2.5 },
+  text: hoverText, hoverinfo: "text", name: "epochs"
+}], {
+  title: { text: "3D Trajectory (ENU)", font: { color: "#eee", size: 14 } },
+  scene: {
+    aspectmode: "data",
+    xaxis: { title: "East (m)", color: "#999", gridcolor: "#333", backgroundcolor: "#16213e" },
+    yaxis: { title: "North (m)", color: "#999", gridcolor: "#333", backgroundcolor: "#16213e" },
+    zaxis: { title: "Up (m)", color: "#999", gridcolor: "#333", backgroundcolor: "#16213e" },
+    bgcolor: "#16213e"
+  },
+  paper_bgcolor: "#1a1a2e",
+  margin: { l: 0, r: 0, t: 40, b: 0 },
+  showlegend: false
+}, { responsive: true });
+
+// --- 2D map (lat/lon) ---
+Plotly.newPlot("plot2d", [{
+  x: D.lon, y: D.lat, mode: "markers",
+  marker: { color: colors, size: 4 },
+  text: hoverText, hoverinfo: "text", type: "scatter"
+}], {
+  title: { text: "Map (Lat/Lon)", font: { color: "#eee", size: 14 } },
+  xaxis: { title: "Longitude", color: "#999", gridcolor: "#333" },
+  yaxis: { title: "Latitude", color: "#999", gridcolor: "#333",
+           scaleanchor: "x",
+           scaleratio: 1 / Math.cos((D.lat[0] || 0) * Math.PI / 180) },
+  plot_bgcolor: "#16213e", paper_bgcolor: "#1a1a2e",
+  margin: { l: 60, r: 20, t: 40, b: 40 },
+  showlegend: false
+}, { responsive: true });
+
+// --- Timeline strip (canvas) ---
+(function() {
+  const canvas = document.getElementById("timeline-canvas");
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * (window.devicePixelRatio || 1);
+  canvas.height = rect.height * (window.devicePixelRatio || 1);
+  canvas.style.width = rect.width + "px";
+  canvas.style.height = rect.height + "px";
+  const ctx = canvas.getContext("2d");
+  const n = D.t.length;
+  if (n === 0) return;
+  const tMin = D.t[0], tMax = D.t[n - 1];
+  const tSpan = tMax - tMin || 1;
+  const w = canvas.width, h = canvas.height;
+  const barW = Math.max(1, w / n);
+  for (let i = 0; i < n; i++) {
+    const x = ((D.t[i] - tMin) / tSpan) * w;
+    ctx.fillStyle = COLORS[D.labels[i]];
+    ctx.fillRect(x, 0, barW + 0.5, h);
+  }
+})();
+
+// --- Signal sparklines (top 4) ---
+const topSigs = D.top_signals;
+for (let si = 0; si < 4; si++) {
+  const name = topSigs[si] || ("signal_" + si);
+  const vals = (D.signal_values && D.signal_values[name]) || [];
+  const thresh = (D.signal_thresholds && D.signal_thresholds[name]) || null;
+  const divId = "sig" + si;
+  const traces = [{
+    x: D.t, y: vals, mode: "lines", line: { color: "#8b8bff", width: 1.2 },
+    name: name, hoverinfo: "x+y"
+  }];
+  const shapes = [];
+  if (thresh !== null) {
+    shapes.push({
+      type: "line", x0: D.t[0], x1: D.t[D.t.length - 1],
+      y0: thresh, y1: thresh,
+      line: { color: "#ef4444", width: 1.5, dash: "dash" }
+    });
+  }
+  Plotly.newPlot(divId, traces, {
+    title: { text: name + (thresh !== null ? " (p95=" + thresh.toFixed(3) + ")" : ""),
+             font: { color: "#ccc", size: 12 } },
+    xaxis: { title: "Time (s)", color: "#777", gridcolor: "#2a2a3e", zeroline: false },
+    yaxis: { color: "#777", gridcolor: "#2a2a3e", zeroline: false },
+    plot_bgcolor: "#16213e", paper_bgcolor: "#1a1a2e",
+    margin: { l: 50, r: 16, t: 30, b: 30 },
+    showlegend: false,
+    shapes: shapes
+  }, { responsive: true });
+}
+</script>
+</body></html>

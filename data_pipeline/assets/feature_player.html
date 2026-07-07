@@ -1,0 +1,182 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Feature player — KLT features + flow + trajectory math</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #0b0f17; color: #d8e0ee; font-family: sans-serif; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto auto; gap: 8px; padding: 8px; min-height: 100vh; box-sizing: border-box; }
+    .panel { background: #0f1623; border: 1px solid #1f2937; border-radius: 6px; padding: 8px; overflow: hidden; }
+    .full { grid-column: 1 / span 2; }
+    h2 { font-size: 13px; margin: 0 0 4px 0; color: #93c5fd; }
+    canvas { display: block; max-width: 100%; height: auto; image-rendering: crisp-edges; background: #000; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 11px; }
+    .ok   { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    .bad  { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
+    #info, #math { font-size: 12px; line-height: 1.6; color: #cbd5e1; padding: 4px 6px; }
+    #plot2d { width: 100%; height: 380px; }
+    .ctl { display: flex; align-items: center; gap: 10px; padding: 6px 8px; }
+    .ctl button { background: #1f2937; color: #cbd5e1; border: 1px solid #374151; border-radius: 4px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+    .ctl button:hover { background: #374151; }
+    #slider { flex: 1; }
+    code { background: #1f2937; padding: 1px 4px; border-radius: 3px; }
+    small { color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="grid">
+    <div class="panel">
+        <h2>Frame __W__×__H__ &mdash; KLT features &amp; per-feature motion</h2>
+        <canvas id="cv" width="__W__" height="__H__"></canvas>
+        <div id="info"></div>
+    </div>
+    <div class="panel">
+        <h2>Top-down trajectory (East/North, ENU)</h2>
+        <div id="plot2d"></div>
+    </div>
+    <div class="panel full">
+        <div class="ctl">
+            <button id="prev">‹ prev</button>
+            <button id="play">▶ play</button>
+            <button id="next">next ›</button>
+            <input id="slider" type="range" min="0" max="0" value="0" step="1" />
+            <span id="counter" style="font-size:12px;color:#94a3b8;"></span>
+        </div>
+    </div>
+    <div class="panel full">
+        <h2>Per-frame math &mdash; disagreement vs PPK / FLP-bent / hybrid</h2>
+        <div id="math"></div>
+        <small>
+            <b>vio_pred</b> = previous accepted position + ∫ VIO velocity over this interval.<br>
+            <b>Disagreement_X</b> = || X − vio_pred ||₂ horizontal.<br>
+            Lower disagreement ⇒ source agrees with the visual-inertial expectation.<br>
+            <b>hybrid</b> = Gaussian-weighted average of PPK and FLP-bent with weights w_X = exp(−(d_X/σ)²/2).
+        </small>
+    </div>
+</div>
+<script>
+const FRAMES  = __FRAMES__;
+const TRAJ    = __TRAJ__;
+const FRAMES_DIR = "__FRAMES_DIR__";
+const cv  = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const inf = document.getElementById("info");
+const mt  = document.getElementById("math");
+const sl  = document.getElementById("slider");
+const cnt = document.getElementById("counter");
+sl.max = FRAMES.length - 1;
+
+const layoutBase = {
+    paper_bgcolor: "#0b0f17", plot_bgcolor: "#0b0f17",
+    font: { color: "#d8e0ee" },
+    margin: { l: 50, r: 16, t: 8, b: 36 },
+    xaxis: { color: "#cbd5e1", gridcolor: "#1f2937", title: "East (m)", scaleanchor: "y" },
+    yaxis: { color: "#cbd5e1", gridcolor: "#1f2937", title: "North (m)" },
+    legend: { font: { color: "#cbd5e1" }, bgcolor: "rgba(0,0,0,0)" },
+};
+const t_gt   = { x: TRAJ.gt?.e   || [], y: TRAJ.gt?.n   || [], type: "scattergl", mode: "lines", line: { color: "#f8fafc", width: 3 }, opacity: 0.7, name: "GT" };
+const t_ppk  = { x: TRAJ.ppk.e,         y: TRAJ.ppk.n,        type: "scattergl", mode: "lines", line: { color: "#60a5fa", dash: "dash", width: 2 }, opacity: 0.85, name: "PPK" };
+const t_flp  = { x: TRAJ.flp.e,         y: TRAJ.flp.n,        type: "scattergl", mode: "lines", line: { color: "#facc15", width: 2 }, opacity: 0.85, name: "FLP-bent" };
+const t_hyb  = { x: TRAJ.hyb.e,         y: TRAJ.hyb.n,        type: "scattergl", mode: "lines", line: { color: "#c084fc", width: 2 }, opacity: 0.95, name: "hybrid" };
+const t_now  = { x: [0], y: [0], type: "scattergl", mode: "markers", marker: { color: "#ef4444", size: 12 }, name: "current" };
+Plotly.newPlot("plot2d", [t_gt, t_ppk, t_flp, t_hyb, t_now], layoutBase, { responsive: true, displaylogo: false });
+
+let cur_img = null;
+function show(i) {
+    const f = FRAMES[i];
+    cnt.textContent = `frame ${i + 1} / ${FRAMES.length}`;
+    cur_img = new Image();
+    cur_img.onload = () => {
+        ctx.drawImage(cur_img, 0, 0, cv.width, cv.height);
+        // Draw flow arrows (yellow) + current features (green).
+        for (let j = 0; j < f.p0.length; j++) {
+            const [x0, y0] = f.p0[j];
+            const [x1, y1] = f.p1[j];
+            ctx.strokeStyle = "rgba(255, 230, 80, 0.85)";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.lineTo(x1, y1);
+            ctx.stroke();
+            // arrowhead
+            const ang = Math.atan2(y1 - y0, x1 - x0);
+            const ah = 6;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1 - ah * Math.cos(ang - 0.35), y1 - ah * Math.sin(ang - 0.35));
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1 - ah * Math.cos(ang + 0.35), y1 - ah * Math.sin(ang + 0.35));
+            ctx.stroke();
+            // current pt
+            ctx.fillStyle = "#22c55e";
+            ctx.beginPath();
+            ctx.arc(x1, y1, 2.5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    };
+    cur_img.src = FRAMES_DIR + "/" + f.image;
+
+    // Update info pill row.
+    inf.innerHTML = `
+        <span class="pill">image: <code>${f.image}</code></span>
+        <span class="pill">t=${f.t_video_s.toFixed(2)}s</span>
+        <span class="pill">features: ${f.p0.length}</span>
+        <span class="pill">inliers: ${f.n_inliers}</span>
+        <span class="pill">rotation: ${f.rot_deg.toFixed(2)}°</span>
+        <span class="pill">scale (PPK speed): ${f.speed_mps.toFixed(2)} m/s</span>
+    `;
+
+    // Math panel: disagreement metrics for this frame.
+    let math = "";
+    if (f.math) {
+        const m = f.math;
+        const cls = (d) => d < 1 ? "ok" : (d < 3 ? "warn" : "bad");
+        math = `
+            <span class="pill">prev_anchor=(${m.prev_e.toFixed(2)}, ${m.prev_n.toFixed(2)}) m</span>
+            <span class="pill">VIO Δ=(${m.vio_de.toFixed(2)}, ${m.vio_dn.toFixed(2)}) m (over ${m.dt.toFixed(2)}s)</span>
+            <span class="pill">vio_pred=(${m.pred_e.toFixed(2)}, ${m.pred_n.toFixed(2)})</span>
+            <br>
+            <span class="pill">PPK=(${m.ppk_e.toFixed(2)}, ${m.ppk_n.toFixed(2)})</span>
+            <span class="pill ${cls(m.d_ppk)}">|PPK − vio_pred| = ${m.d_ppk.toFixed(2)} m</span>
+            <span class="pill">w_PPK=${m.w_ppk.toFixed(3)}</span>
+            <br>
+            <span class="pill">FLP-bent=(${m.flp_e.toFixed(2)}, ${m.flp_n.toFixed(2)})</span>
+            <span class="pill ${cls(m.d_flp)}">|FLP − vio_pred| = ${m.d_flp.toFixed(2)} m</span>
+            <span class="pill">w_FLP=${m.w_flp.toFixed(3)}</span>
+            <br>
+            <span class="pill" style="background:#4c1d95;border-color:#7c3aed;">hybrid=(${m.hyb_e.toFixed(2)}, ${m.hyb_n.toFixed(2)})</span>
+            ${(typeof m.gt_err_h === "number" && isFinite(m.gt_err_h)) ?
+              `<span class="pill ${cls(m.gt_err_h)}">|hybrid − GT| = ${m.gt_err_h.toFixed(2)} m</span>` : ""}
+        `;
+    } else {
+        math = `<span class="pill warn">no prior anchor yet (bootstrap)</span>`;
+    }
+    mt.innerHTML = math;
+
+    // Move "current" marker on the trajectory plot.
+    if (f.math) {
+        Plotly.restyle("plot2d", { x: [[f.math.hyb_e]], y: [[f.math.hyb_n]] }, [4]);
+    }
+}
+
+sl.oninput = () => show(parseInt(sl.value));
+document.getElementById("prev").onclick = () => { sl.value = Math.max(0, parseInt(sl.value) - 1); show(parseInt(sl.value)); };
+document.getElementById("next").onclick = () => { sl.value = Math.min(parseInt(sl.max), parseInt(sl.value) + 1); show(parseInt(sl.value)); };
+let playing = false; let timer = null;
+document.getElementById("play").onclick = () => {
+    if (playing) { clearInterval(timer); playing = false; document.getElementById("play").textContent = "▶ play"; }
+    else {
+        playing = true; document.getElementById("play").textContent = "⏸ pause";
+        timer = setInterval(() => {
+            let v = parseInt(sl.value);
+            if (v + 1 > parseInt(sl.max)) { clearInterval(timer); playing = false; document.getElementById("play").textContent = "▶ play"; return; }
+            sl.value = v + 1; show(v + 1);
+        }, 200);
+    }
+};
+show(0);
+</script>
+</body>
+</html>
