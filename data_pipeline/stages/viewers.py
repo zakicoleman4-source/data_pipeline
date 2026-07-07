@@ -1543,9 +1543,21 @@ def build_sync_player(
                     else Path(wav).resolve().as_uri()
                 )
 
+    # Human-readable note for trimmed ("chop") clips so the time display can
+    # explain why video 0:00 is not the original recording start. UI text only
+    # -- the timing math above is untouched.
+    clip_note: Optional[str] = None
+    if chop_video_anchor is not None:
+        clip_note = (
+            "Trimmed clip: video 0:00.000 is the START OF THIS CLIP, not the "
+            "start of the original recording. UTC times shown are absolute "
+            "wall-clock times, so they do not start at the session start."
+        )
+
     template = (_ASSETS_DIR / "sync_player.html").read_text(encoding="utf-8")
     html = (
         template
+        .replace("__CLIP_NOTE__", json.dumps(clip_note))
         .replace("__VIDEO_SRC__", json.dumps(video_src))
         .replace("__TRAJECTORY__", json.dumps(payload))
         .replace("__META__", json.dumps(meta))

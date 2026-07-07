@@ -76,13 +76,73 @@
     .export-panel .btn-export:hover { background: #16a34a; }
     .export-panel .btn-cancel { background: #222; color: #ddd; }
     .trust-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+    /* Prominent time readout: which clock is on screen right now */
+    .time-readout { font-variant-numeric: tabular-nums; font-size: 13px; color: #dbeafe;
+        margin-top: 4px; }
+    .time-readout b { color: #93c5fd; font-weight: 600; }
+    .time-readout .tr-sep { color: #444; margin: 0 6px; }
+    .time-readout .tr-note { font-size: 11px; color: #7c93b8; }
+    .time-readout .tr-clip { display: block; font-size: 11px; color: #fbbf24; margin-top: 2px; }
+
+    /* Collapsible "Legend / What am I looking at?" help box */
+    .legend-box { margin-top: 4px; font-size: 12px; }
+    .legend-box summary { cursor: pointer; color: #38b6ff; font-weight: 600;
+        user-select: none; outline: none; }
+    .legend-box summary:hover { color: #7cd4ff; }
+    .legend-box .legend-body { background: #0f1626; border: 1px solid #263149;
+        border-radius: 8px; padding: 8px 14px; margin-top: 6px; max-height: 40vh;
+        overflow-y: auto; line-height: 1.5; color: #c7d2e4; }
+    .legend-box .legend-body ul { margin: 4px 0; padding-left: 18px; }
+    .legend-box .legend-body li { margin: 3px 0; }
+    .legend-box .legend-body b { color: #e5edf8; }
 </style>
 </head>
 <body>
 <div class="grid">
     <div class="header">
-        <b>Video + trajectory player</b> &mdash; the orange dot is the current frame, the cyan trail is the last 5 s of motion.
-        <span class="small" id="map-hint"></span><br>
+        <b>Video + GPS trajectory player</b> &mdash;
+        <span style="color:#fb923c">orange marker</span> = <b>GPS-PPK position</b>
+        (the post-processed GPS location at the current video frame's UTC time);
+        cyan trail = last 5 s of motion.
+        <span class="small" id="map-hint"></span>
+        <div class="time-readout" id="time-readout">
+            <b>Video time:</b> <span id="tr-video">--:--:--.---</span>
+            <span class="tr-sep">|</span>
+            <b>UTC:</b> <span id="tr-utc">--</span>
+            <span class="tr-note">&larr; GPS position time: the map marker &amp; all GPS readouts are sampled at this UTC</span>
+            <span class="tr-clip" id="tr-clip" style="display:none"></span>
+        </div>
+        <details class="legend-box" id="legend-box">
+            <summary>Legend / What am I looking at?</summary>
+            <div class="legend-body">
+                <ul>
+                    <li><b>Video (left):</b> the recorded drive. The controls at the bottom scrub this file.</li>
+                    <li><b>Time bar (above):</b> <b>Video time</b> is the position inside this video file;
+                        <b>UTC</b> is the real-world wall-clock time of the frame on screen.
+                        Every GPS value shown (marker, speed, heading) is sampled at that UTC.
+                        <span id="legend-time-note"></span></li>
+                    <li><b>3D path &amp; map (right):</b> the whole drive, coloured by confidence
+                        (<span style="color:#22c55e">green</span> = high,
+                        <span style="color:#f97316">orange</span> = position-only,
+                        <span style="color:#3b82f6">blue</span> = velocity-only,
+                        <span style="color:#ef4444">red</span> = low).
+                        The <span style="color:#fb923c">orange diamond</span> is the <b>GPS-PPK marker</b>:
+                        the post-processed GPS position at the current frame's UTC. Cyan trail = last 5 s.</li>
+                    <li><b>Speed HUD (top-left of the video):</b> the big number is the speed in km/h from
+                        <b>GPS velocity</b> (Doppler). The three chips compare speed sources:
+                        GPS velocity, GPS path difference (position change per second), and the phone's fused GPS.
+                        The two compasses show the <b>direction of travel</b> (needle points where the car is going; N = North, up).</li>
+                    <li><b>Skyplot:</b> satellites currently overhead (N = North). Filled markers = used in the solution;
+                        hollow yellow = tracked but unused; amber = obstructed / multipath.</li>
+                    <li><b>Audio spectrogram (optional):</b> the synced microphone track; the orange vertical line is the current time.</li>
+                    <li><b>Sensors panel ("sensors" button, bottom-right):</b> checks the phone's motion sensors (IMU)
+                        against the GPS-PPK track &mdash; <b>yaw rate</b> (how fast the car is turning),
+                        <b>acceleration</b> (braking / cornering), and a top-down <b>vehicle box</b>:
+                        box heading from the gyro, dotted needle = travel direction from GPS-PPK positions.</li>
+                </ul>
+            </div>
+        </details><br>
         <span class="pill" id="pill-anchors">anchors: __N__</span>
         <span class="pill" id="pill-drift">drift: __DRIFT__ ppm</span>
         <span class="pill ok" id="pill-fit">fit uncertainty: __FIT_MS__ ms</span>
@@ -201,6 +261,8 @@ const SYNC_STATS = __SYNC_STATS__;   // cross-clock sync diagnostics or null
 // Affine map video PTS (seconds) -> UTC seconds: utc = VUTC.a + VUTC.b * t_video_s.
 // Used to place the spectrogram playhead on the same UTC axis as the trajectory.
 const VUTC       = __VIDEO_UTC_AFFINE__;
+// Human-readable trimmed-clip note (string) or null for full-session videos.
+const CLIP_NOTE  = __CLIP_NOTE__;
 
 const HAS_VEL = TRAJECTORY.length > 0 && TRAJECTORY[0].dop !== undefined;
 const HAS_FLP = HAS_VEL && TRAJECTORY.some(p => p.flp != null);
@@ -226,17 +288,17 @@ const _CW = 320, _CH = 230;
 const _Q_COL  = { 1:"#22c55e", 2:"#38b6ff", 4:"#f97316", 5:"#ef4444" };
 const _Q_NAME = { 1:"FIX",     2:"FLOAT",   4:"DGPS",    5:"SINGLE"  };
 
-// Source palette (one colour per speed sensor).
+// Source palette (one colour per speed sensor), with plain-language labels.
 const _SRC = {
-    dop: { col:"#38b6ff", label:"DOPPLER" },   // PPK Doppler — primary
-    crd: { col:"#f59e0b", label:"COORDS Δ" },  // ENU position derivative
-    flp: { col:"#a78bfa", label:"FLP"     },   // Android Fused-Location speed
+    dop: { col:"#38b6ff", label:"GPS VEL" },    // PPK Doppler velocity — primary
+    crd: { col:"#f59e0b", label:"GPS PATH Δ" }, // ENU position derivative
+    flp: { col:"#a78bfa", label:"PHONE GPS" },  // Android Fused-Location speed
 };
 
-// Compass widgets (two only — IMU intentionally dropped).
+// Compass widgets: needle = direction of travel from each GPS source, N = up.
 const _COMPASSES = [
-    { cx: 70,  cy:175, R:36, src:"dop" },
-    { cx:250,  cy:175, R:36, src:"crd" },
+    { cx: 70,  cy:175, R:36, src:"dop", lbl:"heading (GPS vel)"  },
+    { cx:250,  cy:175, R:36, src:"crd", lbl:"heading (GPS path)" },
 ];
 
 function _roundRect(ctx, x, y, w, h, r) {
@@ -285,7 +347,7 @@ function _drawDigital(cx, cy, kmh, q) {
     ctx.fillStyle = "#5b7095";
     ctx.font = "bold 9px Arial";
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText("PRIMARY  DOPPLER", cx - w/2 + 8, cy - h/2 + 6);
+    ctx.fillText("SPEED — GPS VELOCITY", cx - w/2 + 8, cy - h/2 + 6);
 
     // Q chip top-right
     if (q != null) {
@@ -326,7 +388,7 @@ function _drawChip(cx, cy, w, kmh, srcKey, isMissing) {
 }
 
 function _drawCompass(c, az) {
-    const { cx, cy, R, src } = c;
+    const { cx, cy, R, src, lbl } = c;
     const ctx = _ctx;
     const col = _SRC[src].col;
 
@@ -383,10 +445,10 @@ function _drawCompass(c, az) {
     // hub
     ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI*2); ctx.fillStyle = "#7a88b8"; ctx.fill();
 
-    // label below
+    // label below — says what the needle is (direction of travel + source)
     ctx.fillStyle = col + "cc"; ctx.font = `bold ${Math.round(R*0.25)}px Arial`;
     ctx.textAlign = "center"; ctx.textBaseline = "top";
-    ctx.fillText(_SRC[src].label, cx, cy+R+6);
+    ctx.fillText(lbl || _SRC[src].label, cx, cy+R+6);
 }
 
 function drawHud(dopKmh, crdKmh, flpKmh, azCrd, azDop, q) {
@@ -685,8 +747,8 @@ const MAP_IMAGE_URL = BASEMAP ? new URL(BASEMAP.png, window.location.href).href 
 const SHOW_MAP = BASEMAP || HAS_SKY;  // show map when basemap or skyplot available
 if (SHOW_MAP) {
     document.getElementById("map-wrap").classList.add("visible");
-    if (BASEMAP) mapHint.textContent = " Lower panel: trajectory on basemap.";
-    else if (HAS_SKY) mapHint.textContent = " Lower panel: trajectory map.";
+    if (BASEMAP) mapHint.textContent = " Lower-right panel: GPS-PPK track on basemap (orange marker = position at current UTC).";
+    else if (HAS_SKY) mapHint.textContent = " Lower-right panel: GPS-PPK track map (orange marker = position at current UTC).";
 }
 
 // Skyline toggle (needs SHOW_MAP + HAS_SKY)
@@ -722,6 +784,31 @@ function formatTime(s) {
     if (!isFinite(s)) return "--:--:--.---";
     const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
     return String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+sec.toFixed(3).padStart(6,"0");
+}
+
+// Absolute wall-clock formatter: UTC seconds -> "YYYY-MM-DD hh:mm:ss.mmm".
+function formatUtc(s) {
+    if (s == null || !isFinite(s)) return "--";
+    const d = new Date(s * 1000);
+    const p = (n, w) => String(n).padStart(w, "0");
+    return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1, 2) + "-" + p(d.getUTCDate(), 2)
+        + " " + p(d.getUTCHours(), 2) + ":" + p(d.getUTCMinutes(), 2) + ":" + p(d.getUTCSeconds(), 2)
+        + "." + p(d.getUTCMilliseconds(), 3);
+}
+
+// Prominent "which time am I looking at?" readout in the header.
+// Video time = position in this file; UTC = the frame's wall-clock time
+// (= GPS position time: the marker & GPS readouts are sampled at this UTC).
+// Display only — the underlying frame->UTC mapping is untouched.
+const _trVideo = document.getElementById("tr-video");
+const _trUtc   = document.getElementById("tr-utc");
+function _updateTimeReadout() {
+    if (!_trVideo || !_trUtc) return;
+    const tv = isFinite(video.currentTime) ? video.currentTime : 0;
+    _trVideo.textContent = formatTime(tv);
+    // The GPS sampling time includes the user sync-bias (same t the marker uses).
+    const u = videoToUtc(tv + _biasMs / 1000);
+    _trUtc.textContent = (u != null) ? formatUtc(u) + " UTC" : "--";
 }
 
 // ── Trajectory ────────────────────────────────────────────────────────────────
@@ -904,6 +991,7 @@ video.addEventListener("timeupdate",()=>{
     seek.value=video.currentTime.toFixed(3);
     const biasStr = _biasMs !== 0 ? `  [bias: ${_biasMs > 0 ? "+" : ""}${_biasMs} ms]` : "";
     clock.textContent=formatTime(video.currentTime)+" / "+formatTime(video.duration) + biasStr;
+    _updateTimeReadout();
     updateMarker();
 });
 seek.addEventListener("input",()=>{video.currentTime=parseFloat(seek.value);});
@@ -939,6 +1027,7 @@ function _applyBias() {
     _biasMs = abs * sign;
     _biasAbs.value = abs;
     lastIdx = -1;
+    _updateTimeReadout();
     updateMarker();
 }
 document.getElementById("bias-apply").addEventListener("click", _applyBias);
@@ -949,6 +1038,7 @@ document.getElementById("bias-reset").addEventListener("click", () => {
     _biasAbs.value = 0;
     _biasDir.value = "1";
     lastIdx = -1;
+    _updateTimeReadout();
     updateMarker();
 });
 
@@ -1208,13 +1298,33 @@ window.addEventListener("resize", () => {
     if (typeof Plotly === "undefined") return;
     try { if (_spectroOn) Plotly.Plots.resize("plot-spectro"); } catch (_) {}
 });
+
+// ── One-time time-display init (labels only — no timing math changed) ─────────
+(function () {
+    // Legend: anchor "video 0:00" to its absolute UTC so the two clocks are
+    // unambiguous even before pressing play.
+    const noteEl = document.getElementById("legend-time-note");
+    const u0 = videoToUtc(0);
+    if (noteEl && u0 != null) {
+        noteEl.textContent =
+            " Video 00:00:00.000 corresponds to " + formatUtc(u0) + " UTC.";
+    }
+    // Trimmed-clip note: explain why UTC does not start at the recording start.
+    if (CLIP_NOTE) {
+        const clipEl = document.getElementById("tr-clip");
+        if (clipEl) { clipEl.textContent = CLIP_NOTE; clipEl.style.display = "block"; }
+        if (noteEl) { noteEl.textContent += " " + CLIP_NOTE; }
+    }
+    _updateTimeReadout();
+})();
 </script>
 
 <!-- ── Sensor-trust panel (IMU vs turns + audio) ─────────────────────────── -->
 <div id="imuTrust" style="position:fixed;left:0;right:0;bottom:0;background:#0b0b0b;
      border-top:1px solid #222;z-index:9998;font-family:sans-serif;color:#ddd;display:none;">
   <div style="display:flex;align-items:center;gap:12px;padding:4px 10px;background:#111;">
-    <b style="font-size:12px;">IMU trust</b>
+    <b style="font-size:12px;">IMU trust &mdash; motion sensors vs GPS-PPK track</b>
+    <span style="font-size:11px;color:#8aa;">do the phone's motion sensors agree with the GPS track? (all times = video time)</span>
     <span id="imuTrustBadges" style="font-size:11px;"></span>
     <button id="imuTrustToggle" style="margin-left:auto;background:#222;color:#ddd;
       border:1px solid #444;padding:2px 8px;cursor:pointer;font-size:11px;">Whole timeline</button>
@@ -1222,16 +1332,24 @@ window.addEventListener("resize", () => {
       padding:2px 8px;cursor:pointer;font-size:11px;">hide</button>
   </div>
   <div style="display:flex;gap:8px;height:300px;padding:6px;box-sizing:border-box;">
-    <div id="imuBox" style="width:300px;flex:none;background:#080808;border:1px solid #1c1c1c;"></div>
+    <div style="width:300px;flex:none;display:flex;flex-direction:column;min-height:0;">
+      <div id="imuBox" style="flex:1;min-height:0;background:#080808;border:1px solid #1c1c1c;"></div>
+      <div style="font-size:10px;color:#9ca3af;line-height:1.45;padding:3px 2px 0;">
+        <span style="color:#7fffb3;">&#9632; Box</span> = vehicle (nose = forward), heading from <b>gyro</b> &middot;
+        <span style="color:#f59e0b;">&#8285; needle</span> = <b>travel direction</b> (from GPS-PPK positions) &middot;
+        dot = g-force (<span style="color:#22c55e;">accel</span>/<span style="color:#ef4444;">brake</span>) &middot; N = North (up)
+      </div>
+    </div>
     <div style="flex:1;display:flex;flex-direction:column;gap:6px;min-width:0;">
       <div id="imuYaw" style="flex:1;min-height:0;"></div>
       <div id="imuAcc" style="flex:1;min-height:0;"></div>
     </div>
   </div>
 </div>
-<button id="imuTrustShow" style="position:fixed;right:10px;bottom:10px;z-index:9999;
+<button id="imuTrustShow" title="Motion sensors (IMU) vs GPS-PPK track"
+  style="position:fixed;right:10px;bottom:10px;z-index:9999;
   background:#1f2937;color:#ddd;border:1px solid #374151;border-radius:6px;
-  padding:4px 10px;cursor:pointer;font-size:12px;">sensors</button>
+  padding:4px 10px;cursor:pointer;font-size:12px;">sensors (IMU vs GPS)</button>
 
 <script>
 (function(){
@@ -1259,28 +1377,30 @@ window.addEventListener("resize", () => {
   const resolved = IMU_STRIP.flags.mount_resolved;
   function baseLayout(title){
     return {paper_bgcolor:'#0b0b0b',plot_bgcolor:'#0b0b0b',font:{color:'#bbb',size:10},
-      margin:{l:46,r:8,t:24,b:20},showlegend:true,
+      margin:{l:46,r:8,t:24,b:30},showlegend:true,
       legend:{orientation:'h',y:1.12,x:0,font:{size:9},bgcolor:'rgba(0,0,0,0)'},
       title:{text:title,font:{size:11,color:'#cbd5e1'},x:0.01,xanchor:'left',y:0.98,yanchor:'top'},
-      xaxis:{gridcolor:'#161616',color:'#888',zeroline:false},
+      xaxis:{gridcolor:'#161616',color:'#888',zeroline:false,
+             title:{text:'video time (s)',font:{size:9,color:'#777'},standoff:4}},
       yaxis:{gridcolor:'#161616',zeroline:true,zerolinecolor:'#3a3a3a',color:'#888'},
       shapes:[{type:'line',x0:T[0],x1:T[0],yref:'paper',y0:0,y1:1,
                line:{color:'#fb923c',width:1.5}}]};
   }
   const CFG={responsive:true,displaylogo:false};
-  // Strip 1 — gyro obvious: measured yaw-rate (green, bold) vs trajectory (orange)
+  // Strip 1 — turning speed: measured gyro yaw-rate (green, bold) vs the turn
+  // rate implied by the GPS-PPK positions (orange). They should overlap.
   Plotly.newPlot('imuYaw',[
-    {x:T,y:IMU_STRIP.yaw_meas_dps,mode:'lines',name:'gyro yaw-rate',line:{color:'#7fffb3',width:1.6}},
-    {x:T,y:IMU_STRIP.turn_traj_dps,mode:'lines',name:'trajectory turn',line:{color:'#f59e0b',width:1.3}},
-  ],baseLayout('Yaw-rate (deg/s) — gyro vs trajectory'),CFG);
+    {x:T,y:IMU_STRIP.yaw_meas_dps,mode:'lines',name:'gyro Z (measured turn rate)',line:{color:'#7fffb3',width:1.6}},
+    {x:T,y:IMU_STRIP.turn_traj_dps,mode:'lines',name:'GPS-PPK track (turn rate from positions)',line:{color:'#f59e0b',width:1.3}},
+  ],baseLayout('Yaw rate (gyro Z) — deg/s — how fast the car is turning (+ = right, − = left)'),CFG);
   // Strip 2 — precise g-forces (gravity removed, vehicle frame)
   const accTraces = resolved ? [
-    {x:T,y:IMU_STRIP.fwd_accel,mode:'lines',name:'forward (accel/brake)',line:{color:'#22c55e',width:1.4}},
-    {x:T,y:IMU_STRIP.lat_accel,mode:'lines',name:'lateral (cornering)',line:{color:'#22d3ee',width:1.4}},
-  ] : [{x:T,y:IMU_STRIP.accel_mag,mode:'lines',name:'|accel|',line:{color:'#ffb37f',width:1}}];
+    {x:T,y:IMU_STRIP.fwd_accel,mode:'lines',name:'longitudinal — braking (−) / accelerating (+)',line:{color:'#22c55e',width:1.4}},
+    {x:T,y:IMU_STRIP.lat_accel,mode:'lines',name:'lateral — cornering force',line:{color:'#22d3ee',width:1.4}},
+  ] : [{x:T,y:IMU_STRIP.accel_mag,mode:'lines',name:'|accel| — total non-gravity acceleration',line:{color:'#ffb37f',width:1}}];
   const accTitle = resolved
-    ? `Linear accel (m/s2) - forward + lateral  (mounting ${(IMU_STRIP.flags.mount_conf||0).toFixed(2)})`
-    : 'Accel magnitude (m/s2) - mounting unresolved';
+    ? `Vehicle acceleration (m/s²) — longitudinal: braking (−) / accelerating (+) · lateral: cornering  (mount confidence ${(IMU_STRIP.flags.mount_conf||0).toFixed(2)})`
+    : 'Accel magnitude (m/s²) — total non-gravity acceleration (phone mounting unknown, direction unavailable)';
   Plotly.newPlot('imuAcc', accTraces, baseLayout(accTitle), CFG);
 
   // ── Top-down, north-up compass: box = gyro heading, needle = trajectory ──
@@ -1309,7 +1429,7 @@ window.addEventListener("resize", () => {
   ];
   const boxLayout={paper_bgcolor:'#080808',plot_bgcolor:'#080808',showlegend:false,
     margin:{l:6,r:6,t:22,b:6},
-    title:{text:'Vehicle heading — gyro (box) vs trajectory (needle), N up',
+    title:{text:'Vehicle heading — deg from North (top-down, N up)',
            font:{size:10.5,color:'#cbd5e1'},x:0.03,xanchor:'left'},
     xaxis:{range:[-1.3,1.3],visible:false,fixedrange:true},
     yaxis:{range:[-1.3,1.3],visible:false,fixedrange:true,scaleanchor:'x',scaleratio:1},
@@ -1337,14 +1457,14 @@ window.addEventListener("resize", () => {
       tr.push({x:[0,bv[0],tvv[0],0],y:[0,bv[1],tvv[1],0],mode:'lines',
         fill:'toself',fillcolor:'rgba(245,158,11,0.18)',line:{color:'rgba(245,158,11,0.4)',width:1},hoverinfo:'skip'});
       let d=((bh-th)+180)%360-180;
-      boxLayout.title.text='Vehicle heading - gyro vs trajectory (N up)  drift '+(d>=0?'+':'')+d.toFixed(1)+' deg';
+      boxLayout.title.text='Vehicle heading — deg from North (N up) · gyro−GPS drift '+(d>=0?'+':'')+d.toFixed(1)+'°';
     }
     return tr;
   }
   function drawBox(i){ Plotly.react('imuBox', boxTraces(i), boxLayout, CFG); }
   if(!resolved){
     document.getElementById('imuTrustBadges').innerHTML +=
-      ' <span style="color:#f59e0b;">mounting unknown - accel unsigned</span>';
+      ' <span style="color:#f59e0b;">phone mounting unknown — accel direction unavailable</span>';
   }
 
   function findIdx(tt){let lo=0,hi=N-1;if(tt<=T[0])return 0;if(tt>=T[hi])return hi;
