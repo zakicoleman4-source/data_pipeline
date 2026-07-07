@@ -180,6 +180,10 @@ class App:
     # MAX_PER_TICK messages per tick and keep the widget under MAX_LOG_LINES.
     MAX_PER_TICK = 200
     MAX_LOG_LINES = 10_000
+    # Sentinel for the client-export source chooser: keep the historical
+    # behaviour (each smoother's *.client.csv carries that smoother's own
+    # rows). Any other value is fed to user_export.resolve_export_rows.
+    EXPORT_SOURCE_AS_RUN = "(as run)"
 
     def __init__(self) -> None:
         # Try drag-and-drop root (optional dependency); fall back to plain Tk.
@@ -1403,6 +1407,14 @@ class App:
         self.var_tb_utc             = tk.BooleanVar(value=False)
         self.var_tb_audio           = tk.BooleanVar(value=False)
         self.var_tb_iso             = tk.BooleanVar(value=False)
+        # Export-source chooser + final-velocity block (user_export F1+F5).
+        # Defaults are all neutral so the default client export stays
+        # byte-identical: "(as run)" keeps each smoother's own rows, final
+        # velocity off, disagreement threshold blank (= None, gate disabled).
+        self.var_exp_source         = tk.StringVar(
+            value=self.EXPORT_SOURCE_AS_RUN)
+        self.var_emit_final_vel     = tk.BooleanVar(value=False)
+        self.var_vel_disagree       = tk.StringVar(value="")
         # Variant comparison state.
         # Holds (label -> csv_path) after Build-all-variants completes so the
         # eval / "use best for Coordinate output" button can find them.
@@ -1902,6 +1914,53 @@ class App:
         cb_tb_iso.grid(row=0, column=4, sticky="w")
         _Tooltip(cb_tb_iso, "Human-readable UTC timestamp column:\n"
                  "iso_time (ISO 8601, e.g. 2026-06-29T12:34:56.123456Z).")
+
+        # Export-source chooser + final-velocity gate (user_export
+        # resolve_export_rows / emit_final_velocity / vel_disagree gate).
+        # All defaults neutral — the client export stays byte-identical
+        # until the user changes them.
+        srow = ttk.Frame(g5)
+        srow.grid(row=3, column=0, sticky="w", padx=10, pady=(0, 8))
+        ttk.Label(srow, text="Export source:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8))
+        try:
+            from .smoothers import list_smoothers as _list_sm
+            _src_values = ([self.EXPORT_SOURCE_AS_RUN, "raw"]
+                           + list(_list_sm()))
+        except Exception:
+            _src_values = [self.EXPORT_SOURCE_AS_RUN, "raw"]
+        cb_src = ttk.Combobox(srow, textvariable=self.var_exp_source,
+                              values=_src_values, state="readonly",
+                              width=20)
+        cb_src.grid(row=0, column=1, sticky="w", padx=(0, 14))
+        _Tooltip(cb_src,
+                 "Which trajectory the client CSV/KML carries:\n"
+                 "• (as run) — each smoother's own output (legacy default)\n"
+                 "• raw — the unsmoothed PPK rows, exactly as parsed\n"
+                 "• <smoother> — run that smoother once on the raw rows and\n"
+                 "  export ITS trajectory, decoupled from whichever\n"
+                 "  smoothers the comparison table ran.")
+
+        cb_fv = ttk.Checkbutton(srow, text="Emit final velocity",
+                                variable=self.var_emit_final_vel)
+        cb_fv.grid(row=0, column=2, sticky="w", padx=(0, 10))
+        _Tooltip(cb_fv,
+                 "Adds final_vn/ve/vu_mps + final_speed_mps (raw Doppler\n"
+                 "velocity) plus vel_disagree_mps + coords_dropped columns\n"
+                 "to the client CSV. OFF (default) keeps the export\n"
+                 "byte-identical to previous versions.")
+
+        ttk.Label(srow, text="vel disagree thr (m/s):",
+                  foreground="#888").grid(row=0, column=3, padx=(0, 2))
+        ent_vd = ttk.Entry(srow, textvariable=self.var_vel_disagree,
+                           width=7)
+        ent_vd.grid(row=0, column=4, sticky="w")
+        _Tooltip(ent_vd,
+                 "Optional coordinate-vs-Doppler velocity disagreement gate\n"
+                 "(m/s). Rows whose coordinate-derived velocity disagrees\n"
+                 "with raw Doppler beyond this threshold get blank\n"
+                 "coordinates + blank final_v* (coords_dropped=1).\n"
+                 "Blank = gate disabled (default).")
 
         # ── Buttons ──────────────────────────────────────────────────────────
         ttk.Separator(f, orient="horizontal").grid(
@@ -2805,6 +2864,10 @@ class App:
         # but cheap) so the worker gets plain values only.
         (exp_coords, exp_smooth_z, exp_z_sigma,
          exp_time_bases, exp_audio_utc) = self._build_export_options()
+        # Export-source + final-velocity controls (same tab group). All
+        # neutral by default -> the client export stays byte-identical.
+        (exp_source, exp_emit_fv,
+         exp_vel_thr) = self._build_export_source_options()
 
         def go() -> None:
             from .parsers import parse_imu, parse_rtkpos
@@ -2829,6 +2892,28 @@ class App:
             stat_p = Path(pos_path).with_suffix(
                 Path(pos_path).suffix + ".stat")
             stat_p = stat_p if stat_p.is_file() else None
+
+            # Export-source override (user_export.resolve_export_rows):
+            # resolved ONCE for the whole run — the same rows feed every
+            # smoother's client export. Fail-soft: a failed override logs
+            # loudly and falls back to the per-smoother rows rather than
+            # aborting the comparison.
+            export_rows_override = None
+            if exp_source is not None:
+                from .stages.user_export import resolve_export_rows
+                try:
+                    self._log(f"[smoothers] client-export source: "
+                              f"{exp_source} (resolve_export_rows)")
+                    export_rows_override = resolve_export_rows(
+                        pos_rows, source=exp_source, imu_rows=imu_rows,
+                        stat_path=stat_p, log=self._log)
+                    self._log(f"[smoothers]   export source {exp_source}: "
+                              f"{len(export_rows_override)} rows")
+                except Exception as _se:
+                    self._log(f"[smoothers]   export source {exp_source} "
+                              f"FAILED ({type(_se).__name__}: {_se}); "
+                              f"falling back to per-smoother rows.")
+                    export_rows_override = None
 
             results = []
             n_total = len(names)
@@ -2856,17 +2941,28 @@ class App:
                             export_kml, export_trajectory,
                         )
                         client_csv = out_root / f"{name}.client.csv"
+                        # Export-source override: when set, the client
+                        # CSV/KML carry the resolved rows (raw or a chosen
+                        # smoother), not this smoother's own output.
+                        exp_rows = (list(export_rows_override)
+                                    if export_rows_override is not None
+                                    else list(res.fused))
+                        exp_tag = (exp_source
+                                   if export_rows_override is not None
+                                   else name)
                         export_trajectory(
-                            list(res.fused), client_csv,
-                            source_tag=name,
+                            exp_rows, client_csv,
+                            source_tag=exp_tag,
                             coord_systems=exp_coords,
                             smooth_z=exp_smooth_z,
                             z_sigma_s=exp_z_sigma,
                             time_bases=exp_time_bases,
                             audio_start_utc_s=exp_audio_utc,
+                            emit_final_velocity=exp_emit_fv,
+                            vel_disagree_threshold_mps=exp_vel_thr,
                         )
                         export_kml(
-                            list(res.fused),
+                            exp_rows,
                             out_root / f"{name}.client.kml",
                             name=name,
                             smooth_z=exp_smooth_z,
@@ -3453,6 +3549,32 @@ class App:
                  "combined_<clip>.mp4 with the global audio track attached\n"
                  "at the boottime-correct offset. Opens the result when done.")
 
+        # ── Camera-model accuracy (photo_compare) ─────────────────────────
+        g_cam = ttk.LabelFrame(f, text="Camera-model accuracy")
+        g_cam.pack(fill="x", padx=10, pady=(4, 10))
+        ttk.Label(
+            g_cam,
+            text=(
+                "Compare a COLMAP camera-model reconstruction against the "
+                "GPS trajectory and a ground-truth .pos: per-frame error "
+                "tables, alignment stats and a verdict, written as a CSV + "
+                "self-contained HTML report."
+            ),
+            foreground="#888", wraplength=920, justify="left",
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+        btn_cam = ttk.Button(
+            g_cam, text="Camera-model accuracy report",
+            command=self._run_camera_report,
+        )
+        btn_cam.pack(anchor="w", padx=8, pady=(2, 8))
+        self._buttons.append(btn_cam)
+        _Tooltip(btn_cam,
+                 "Asks for the COLMAP images.txt/.bin (or the reconstruction\n"
+                 "folder) and a ground-truth .pos, uses the pipeline's\n"
+                 "Georef.csv when one was built this session (asks\n"
+                 "otherwise), then writes camera_vs_gps_vs_gt.csv + an\n"
+                 "offline HTML report and opens it in the browser.")
+
     def _run_export_av(self) -> None:
         """'Export media + stream (full or crop)' — mux via combine_av.
 
@@ -3590,6 +3712,92 @@ class App:
             self.root.after(0, lambda: self._open_path_in_default(out_html))
 
         self._run_async(go, "Analysis report")
+
+    def _run_camera_report(self) -> None:
+        """'Camera-model accuracy report' — ``photo_compare.build_report``.
+
+        All file dialogs run on the Tk main thread BEFORE the worker starts;
+        the parse/align/report work runs on the worker via ``_run_async``
+        (errors are logged + message-boxed there — never crash the UI).
+        The finished HTML opens via ``_open_path_in_default``.
+        """
+        # 1) COLMAP input: images.txt/.bin, or (Cancel) a reconstruction dir.
+        colmap = filedialog.askopenfilename(
+            title=("Pick the COLMAP images.txt / images.bin "
+                   "(Cancel to pick a reconstruction folder instead)"),
+            filetypes=[("COLMAP images", "images.txt images.bin"),
+                       ("All files", "*.*")],
+        )
+        if not colmap:
+            colmap = filedialog.askdirectory(
+                title=("Pick the COLMAP reconstruction folder "
+                       "(contains images.txt or images.bin)"))
+        if not colmap:
+            self._log("[camrep] cancelled (no COLMAP input).")
+            return
+
+        # 2) Ground-truth .pos.
+        gt = filedialog.askopenfilename(
+            title="Pick the ground-truth .pos",
+            filetypes=[(".pos files", "*.pos"), ("All files", "*.*")],
+        )
+        if not gt:
+            self._log("[camrep] cancelled (no ground-truth .pos).")
+            return
+
+        # 3) GPS per-frame positions: prefer the Georef.csv the pipeline
+        #    built this session; otherwise ask. Cancelling falls back to
+        #    interpolating the loaded rover .pos at frame times recovered
+        #    from the RAW session / extracted_frame_times.csv.
+        georef: "Optional[Path]" = None
+        if (self.paths.georef_csv is not None
+                and Path(self.paths.georef_csv).is_file()):
+            georef = Path(self.paths.georef_csv)
+            self._log(f"[camrep] using session Georef.csv: {georef}")
+        else:
+            s = filedialog.askopenfilename(
+                title=("Pick the Georef CSV (Cancel to recover frame "
+                       "times from the loaded RAW session instead)"),
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            )
+            georef = Path(s) if s else None
+        session_dir = self.paths.raw_folder if georef is None else None
+        pos_path = self.paths.pos_path if georef is None else None
+        frame_times = (self.paths.frame_times_csv
+                       if georef is None else None)
+        if georef is None and pos_path is None:
+            messagebox.showerror(
+                "Camera-model accuracy report",
+                "Need a Georef.csv, or a loaded session with a rover .pos\n"
+                "(run/load the PPK solution first) so per-frame GPS\n"
+                "positions can be interpolated.")
+            return
+
+        # 4) Output dir: current out dir when known, else the Analysis
+        #    tab's output folder, else next to the ground truth.
+        out_s = self.var_an_out.get().strip()
+        out_base = (self.paths.out_dir
+                    or (Path(out_s) if out_s else Path(gt).parent))
+        out_dir = Path(out_base) / "camera_report"
+        colmap_p, gt_p = Path(colmap), Path(gt)
+
+        def go() -> None:
+            from .photo_compare import build_report
+            out_dir.mkdir(parents=True, exist_ok=True)
+            res = build_report(
+                colmap_p, gt_p, out_dir,
+                georef_csv=georef, pos=pos_path,
+                frame_times=frame_times, session_dir=session_dir,
+                log=self._log,
+            )
+            if getattr(res, "verdict", None):
+                self._log(f"[camrep] {res.verdict}")
+            target = res.html_path or res.csv_path
+            if target is not None:
+                self.root.after(
+                    0, lambda p=target: self._open_path_in_default(p))
+
+        self._run_async(go, "Camera-model accuracy report")
 
     def _build_viewers_tab(self, nb: ttk.Notebook) -> None:
         f = self._make_scrollable_tab(nb, "Viewers")
@@ -4526,6 +4734,46 @@ class App:
         time_bases = tuple(tb_selected)
 
         return coord_systems, smooth_z, z_sigma_s, time_bases, audio_start_utc_s
+
+    def _build_export_source_options(
+        self,
+    ) -> "tuple[Optional[str], bool, Optional[float]]":
+        """Read the export-source + final-velocity controls (Group 5).
+
+        Returns ``(source, emit_final_velocity, vel_disagree_threshold_mps)``:
+
+        * ``source`` — ``None`` for the "(as run)" default (each smoother's
+          client export carries its own rows — legacy behaviour); otherwise
+          ``"raw"`` or a smoother name, ready for
+          ``stages.user_export.resolve_export_rows``.
+        * ``emit_final_velocity`` — bool, threaded into
+          ``export_trajectory(emit_final_velocity=...)``.
+        * ``vel_disagree_threshold_mps`` — parsed float from the entry, or
+          ``None`` when the field is blank / unparsable / not > 0 (gate
+          disabled — the backend default).
+
+        Defaults are all neutral so the default export stays byte-identical.
+        Must run on the Tk main thread (reads widget variables).
+        """
+        src = (self.var_exp_source.get() or "").strip()
+        source: "Optional[str]" = (
+            None if not src or src == self.EXPORT_SOURCE_AS_RUN else src)
+        emit_fv = bool(self.var_emit_final_vel.get())
+        thr_s = (self.var_vel_disagree.get() or "").strip()
+        thr: "Optional[float]" = None
+        if thr_s:
+            try:
+                thr = float(thr_s)
+            except ValueError:
+                self._log(f"[export] WARN: velocity-disagree threshold "
+                          f"{thr_s!r} is not a number; gate disabled.")
+                thr = None
+            else:
+                if not thr > 0:  # also rejects NaN
+                    self._log(f"[export] WARN: velocity-disagree threshold "
+                              f"must be > 0 (got {thr}); gate disabled.")
+                    thr = None
+        return source, emit_fv, thr
 
     @staticmethod
     def _chop_passthrough(raw) -> "tuple[Optional[Path], Optional[Path]]":
