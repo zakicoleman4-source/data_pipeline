@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>VIO proof — RTS+VIO vs raw PPK vs ref</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #0b0f17; color: #d8e0ee; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.5; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px; }
+    .ok   { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    .bad  { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
+    h3 { margin: 10px 12px 0; font-size: 13px; color: #cbd5e1; }
+    small { color: #94a3b8; }
+    table.cmp { border-collapse: collapse; margin: 8px 12px; font-size: 12px; }
+    table.cmp th, table.cmp td { border: 1px solid #374151; padding: 3px 8px; text-align: right; }
+    table.cmp th { background: #1f2937; color: #cbd5e1; }
+    table.cmp .name { text-align: left; }
+    .plot2d { width: 100vw; height: 60vh; }
+    .ploterr { width: 100vw; height: 26vh; }
+    code { background: #1f2937; padding: 1px 5px; border-radius: 3px; color: #e5e7eb; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>VIO proof</b> &mdash; loose-coupled VIO velocity update + RTS smoother vs raw PPK,
+    both compared to reference-rover reference.
+    <br>
+    <span class="pill" id="calib">VIO calibration p50: __CALIB_DEG__°</span>
+    <span class="pill" id="vio_samples">VIO samples: __VIO_N__</span>
+    <span class="pill" id="vio_used">applied to EKF: __VIO_USED__</span>
+    <span class="pill" id="gt_n">ref epochs: __GT_N__</span>
+    <br>
+    <small>
+        <b>blue</b> raw PPK 1 Hz &middot;
+        <b>orange</b> RTS smoothed (no VIO) &middot;
+        <b>red</b> RTS+VIO smoothed &middot;
+        <b>white</b> reference (1 Hz survey rover).
+        Hover any trace for per-point ENU coords and timestamp.
+    </small>
+    <table class="cmp">
+        <tr><th>source</th><th>n</th><th>hRMSE</th><th>hP50</th><th>hP95</th><th>hmax</th><th>vRMSE</th></tr>
+        <tr><td class="name">raw PPK</td>__ROW_PPK__</tr>
+        <tr><td class="name">RTS (no VIO)</td>__ROW_RTS__</tr>
+        <tr><td class="name">RTS + VIO</td>__ROW_VIO__</tr>
+    </table>
+</div>
+
+<h3>Top-down (East / North), all traces overlaid &mdash; ref in white reference</h3>
+<div id="plot2d" class="plot2d"></div>
+
+<h3>Per-epoch horizontal error vs ref (m)</h3>
+<div id="ploterr" class="ploterr"></div>
+
+<script>
+const DATA = __DATA__;
+
+const layoutBase = {
+    paper_bgcolor: "#0b0f17",
+    plot_bgcolor:  "#0b0f17",
+    font: { color: "#d8e0ee" },
+    margin: { l: 60, r: 16, t: 8, b: 36 },
+    xaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    yaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    legend: { font: { color: "#cbd5e1" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+const traces2d = [];
+function add2d(name, src, color, dash, width, opacity) {
+    if (!src || !src.e || !src.e.length) return;
+    traces2d.push({
+        x: src.e, y: src.n,
+        type: "scattergl", mode: "lines",
+        line: { color, dash, width: width || 2 },
+        opacity: opacity || 1.0,
+        name,
+    });
+}
+add2d("ref (reference survey rover)", DATA.gt,  "#f8fafc", "solid", 3, 0.7);
+add2d("raw PPK",                 DATA.ppk, "#60a5fa", "dash",  2, 0.85);
+add2d("RTS (no VIO)",            DATA.rts, "#f59e0b", "solid", 2, 0.85);
+add2d("RTS + VIO",               DATA.vio, "#ef4444", "solid", 2, 1.00);
+Plotly.newPlot("plot2d", traces2d, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "East (m)", scaleanchor: "y" },
+    yaxis: { ...layoutBase.yaxis, title: "North (m)" },
+}, { responsive: true, displaylogo: false });
+
+const tracesErr = [];
+function addErr(name, t, errs, color, width, opacity) {
+    if (!t || !t.length) return;
+    tracesErr.push({
+        x: t, y: errs,
+        type: "scattergl", mode: "lines",
+        line: { color, width: width || 1.2 },
+        opacity: opacity || 0.9,
+        name,
+    });
+}
+addErr("raw PPK error",       DATA.errs.ppk_t, DATA.errs.ppk_h, "#60a5fa", 1.2, 0.85);
+addErr("RTS (no VIO) error",  DATA.errs.rts_t, DATA.errs.rts_h, "#f59e0b", 1.2, 0.85);
+addErr("RTS + VIO error",     DATA.errs.vio_t, DATA.errs.vio_h, "#ef4444", 1.4, 1.0);
+Plotly.newPlot("ploterr", tracesErr, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "t (s since ref start)" },
+    yaxis: { ...layoutBase.yaxis, title: "horiz error vs ref (m)", rangemode: "tozero" },
+}, { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

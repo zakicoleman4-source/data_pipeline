@@ -1,0 +1,88 @@
+# ============================================================================
+# data_pipeline / data_pipeline runtime dependencies (complete).
+#
+# Install:
+#     pip install -r requirements.txt
+#
+# Optional add-ons (uncomment OR `pip install ...` separately):
+#   * gtsam            — factor-graph smoother (data_pipeline.fgo)
+#   * pytest           — running the test suite (or use requirements-dev.txt)
+#   * pyinstaller      — building the Windows .exe (scripts/build_exe.bat)
+#
+# Coverage = every third-party `import` (eager + lazy/conditional) found in
+# data_pipeline/, scripts/, tests/, vendor/ across BOTH session checkouts:
+#   <repo>
+#   <repo>
+#
+# Lower bounds reflect the actual versions tested green on this machine
+# (Windows 11 / Python 3.13.9). Loosening below those is at your own risk.
+#
+# Vendored locally (no PyPI install needed):
+#   - gnsslogger, rinex3       (vendor/android_rinex/src/)
+#   - ffmpeg binaries          (vendor/ffmpeg/bin/)
+# ============================================================================
+
+# ---- core numeric / scientific stack ----
+numpy>=1.24.0,<3.0             # arrays everywhere; tested 2.4.5
+scipy>=1.10.0                  # scipy.optimize.least_squares (vio BA),
+                                # scipy.ndimage (smoothing). Tested 1.16.3
+
+# ---- computer vision ----
+opencv-python>=4.5.0           # cv2 — VIO (KLT, essential matrix, MAGSAC++),
+                                # video frame extraction, video render.
+                                # >=4.5 enables cv2.USAC_MAGSAC (v2 VIO).
+                                # Tested 4.13.0
+
+# ---- plotting / GUI ----
+matplotlib>=3.5.0              # plot scripts (scripts/_make_vel_plot.py, etc.),
+                                # FigureCanvasTkAgg backend for embedded GUI plots.
+                                # Tested 3.10.7
+tkinterdnd2>=0.3.0             # GUI drag-and-drop folder support. Tested 0.4.3
+                                # (Tkinter itself ships with CPython; nothing to install.)
+
+# ---- geospatial ----
+pyproj>=3.4.0                  # coords.Transformer (LLH<->ECEF<->UTM).
+                                # Tested 3.7.2
+rasterio>=1.3.0                # basemap GeoTIFF read + reproject
+                                # (data_pipeline/sync_basemap.py,
+                                #  scripts/make_sample_basemap_geotiff.py,
+                                #  stages/viewers.py basemap overlay).
+                                # Tested 1.5.0
+
+# Pillow is a hard transitive of matplotlib but the GUI viewers also
+# import it directly when present for thumbnail rendering. Pin it
+# explicitly so the resolver doesn't bring in an older incompatible
+# wheel on minimal envs.
+pillow>=10.0.0                 # matplotlib + GUI viewers. Tested 12.1.1
+
+# ---- factor graph optimisation (auto-install on Linux/macOS; manual on Win) ----
+# gtsam 4.2.1 publishes wheels on PyPI for cp310-cp314 on Linux x86_64,
+# Linux aarch64, macOS Intel, and macOS Apple-Silicon. NO Windows wheel
+# exists for 4.2.1 — Windows clients need either conda-forge OR a source
+# build. The environment marker below pip-installs gtsam automatically on
+# every supported OS and silently no-ops on Windows.
+gtsam>=4.2,<5;        platform_system != "Windows"
+# Windows users that need FGO:
+#     conda install -c conda-forge gtsam        # easiest
+#     python install.py                          # tries conda, then pip --pre
+# Without gtsam the FGO smoother (CsvOptions.use_fgo_smoothing=True) is
+# disabled; everything else (VIO, EKF, cv_rts_pv, GUI) is unaffected.
+
+# ---- dev / test (install via `pip install -r requirements-dev.txt`
+#                  OR uncomment line below)
+# pytest>=7.0.0                # tested 9.0.3 — runs `pytest tests/`
+
+# ---- build (one-shot for .exe via scripts/build_exe.bat) ----
+# pyinstaller>=6.0.0           # installed automatically by build_exe.bat
+
+# ---- standard-library imports used by the project (no install needed,
+#      listed here only as documentation of the runtime surface area) ----
+# argparse, base64, bisect, collections, concurrent.futures, contextlib,
+# copy, csv, ctypes, dataclasses, datetime, doctest, enum, fractions,
+# functools, glob, hashlib, html, http, importlib, inspect, io, json,
+# locale, logging, math, multiprocessing, operator, os, pathlib, pickle,
+# platform, queue, random, re, shlex, shutil, signal, socket, statistics,
+# string, struct, subprocess, sys, tempfile, textwrap, threading, time,
+# tkinter, tkinter.filedialog, tkinter.messagebox, tkinter.ttk,
+# traceback, types, typing, unittest, unittest.mock, urllib.error,
+# urllib.parse, urllib.request, warnings, webbrowser, xml, zipfile

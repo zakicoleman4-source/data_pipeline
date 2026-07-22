@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Build / dist (PyInstaller outputs). dist_v2/ etc. exist only when a
+# previous dist/ was locked by an antivirus scanner mid-build and we
+# rebuild to a sibling dir.
+build/
+build_*/
+dist/
+dist_*/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pipeline outputs (never commit datasets)
+out/
+out_*/
+_e2e_*/
+_verify_run/
+_*.py
+!data_pipeline/_ui_helpers.py
+# _*.py is meant for scratch scripts, but it also swallows dunder package files.
+# Never ignore package __init__/__main__ (breaks import / `python -m`).
+!**/__init__.py
+!**/__main__.py
+runs/
+*.obs
+*.nav
+*.pos
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+
+# Wheels (populate via scripts/prep_offline_wheels.ps1 if needed).
+vendor/wheels/**/*.whl
+vendor/wheels/**/*.tar.gz
+
+# Sample GeoTIFF (committed; ignore other TIFFs elsewhere)
+!/extras/sample_basemap/wgs84_sample.tif
+frames/
+*.html
+*.csv
+
+# Pipeline run outputs
+adaptive_run/
+ekf_eval/
+**/extracted_frame_times.csv
+**/georef.csv
+test_fixtures/
+
+# Local editor / agent state
+.claude/
+
+# Allow vendored assets
+!data_pipeline/assets/*.html
+!data_pipeline/assets/*.js
+app_icon_src.jpg
+build/
+dist/
+data_pipeline.zip
+
+# Local-only / internal (never commit)
+CLAUDE.md
+.claude/
+
+# graphify knowledge graph (derived; rebuilt by post-commit hook)
+graphify-out/

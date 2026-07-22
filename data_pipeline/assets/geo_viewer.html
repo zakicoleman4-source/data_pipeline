@@ -1,0 +1,235 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Geo viewer</title>
+<script src="plotly.min.js"></script>
+<style>
+  html,body{margin:0;padding:0;background:#0a0a0a;color:#ddd;font-family:sans-serif;height:100%;}
+  #header{padding:6px 14px;background:#111;border-bottom:1px solid #222;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  #header b{font-size:14px;}
+  .tab-btn{padding:4px 14px;border:1px solid #374151;border-radius:4px;background:#1f2937;color:#ccc;cursor:pointer;font-size:12px;}
+  .tab-btn.active{background:#1d4ed8;border-color:#3b82f6;color:#fff;}
+  .action-btn{padding:3px 10px;border:1px solid #374151;border-radius:4px;background:#1f2937;color:#ccc;cursor:pointer;font-size:11px;}
+  .pill{display:inline-block;background:#1f2937;border:1px solid #374151;border-radius:999px;padding:2px 10px;font-size:11px;}
+  #content{height:calc(100vh - 44px);position:relative;}
+  .tab-panel{position:absolute;top:0;left:0;right:0;bottom:0;display:none;}
+  .tab-panel.active{display:block;}
+  .plot-fill{width:100%;height:100%;}
+</style>
+</head>
+<body>
+<div id="header">
+  <b>Geo viewer</b>
+  <button class="tab-btn active" id="btn-2d" onclick="showTab('2d')">2D Satellite</button>
+  <button class="tab-btn" id="btn-3d" onclick="showTab('3d')">3D Terrain</button>
+  &nbsp;
+  <button class="action-btn" id="btn-basemap" onclick="toggleBasemap()">Hide basemap</button>
+  <button class="action-btn" id="btn-dsm"     onclick="toggleDsm()"    style="display:none;">Hide DSM</button>
+  <span class="pill" id="p-n"></span>
+  <span class="pill" id="p-fix"    style="background:#064e3b;border-color:#065f46;color:#d1fae5;"></span>
+  <span class="pill" id="p-float"  style="background:#1e3a5f;border-color:#2563eb;color:#bfdbfe;"></span>
+  <span class="pill" id="p-single" style="background:#78350f;border-color:#b45309;color:#fde68a;"></span>
+  <span class="pill" id="p-smooth" style="background:#1e1b4b;border-color:#6d28d9;color:#ddd8fe;display:none;"></span>
+</div>
+<div id="content">
+  <div class="tab-panel active" id="panel-2d">
+    <div id="plot-2d" class="plot-fill"></div>
+  </div>
+  <div class="tab-panel" id="panel-3d">
+    <div id="plot-3d" class="plot-fill"></div>
+  </div>
+</div>
+<script>
+const D = __GEO_DATA__;
+
+const Q_COL  = {1:"#22c55e", 2:"#38b6ff", 4:"#f97316", 5:"#ef4444"};
+const Q_NAME = {1:"Fix",     2:"Float",   4:"Single",  5:"Degraded"};
+
+const nFix    = D.trajectory.filter(p=>p.q===1).length;
+const nFloat  = D.trajectory.filter(p=>p.q===2).length;
+const nSingle = D.trajectory.filter(p=>p.q>=4).length;
+document.getElementById("p-n").textContent     = "n = "+D.trajectory.length+" epochs";
+document.getElementById("p-fix").textContent   = "Fix: "+nFix;
+document.getElementById("p-float").textContent = "Float: "+nFloat;
+document.getElementById("p-single").textContent= "Single: "+nSingle;
+
+if (!D.basemap) document.getElementById("btn-basemap").style.display = "none";
+let dsmVisible = true;
+let dsmTraceIdx = -1;   // set after plot-3d is built
+if (D.smoothed && D.smoothed.length) {
+  const ps = document.getElementById("p-smooth");
+  ps.textContent = "Smoothed: "+D.smoothed.length+" frames";
+  ps.style.display = "";
+}
+
+const BG="#0a0a0a", PAPER="#111", GRID="#1e1e1e";
+let basemapVisible = D.basemap != null;
+
+// ── 2D plot ──────────────────────────────────────────────────────────────────
+const lats2 = D.trajectory.map(p=>p.lat);
+const lons2 = D.trajectory.map(p=>p.lon);
+const qs2   = D.trajectory.map(p=>p.q);
+const hs2   = D.trajectory.map(p=>p.h.toFixed(1)+"m  Q="+(Q_NAME[p.q]||p.q));
+
+const traces2d = [];
+
+// smoothed trajectory (drawn first so PPK dots sit on top)
+if (D.smoothed && D.smoothed.length) {
+  traces2d.push({
+    type:"scatter", mode:"lines",
+    x: D.smoothed.map(p=>p.lon),
+    y: D.smoothed.map(p=>p.lat),
+    name:"Smoothed",
+    line:{color:"#a78bfa", width:2},
+    hovertemplate:"lon=%{x:.7f}<br>lat=%{y:.7f}<br>h=%{text:.1f}m<extra>Smoothed</extra>",
+    text: D.smoothed.map(p=>p.h),
+  });
+}
+
+traces2d.push({
+  type:"scatter", mode:"lines+markers",
+  x:lons2, y:lats2,
+  name:"PPK trajectory",
+  line:{color:"rgba(120,180,255,0.45)", width:1.5},
+  marker:{color:qs2.map(q=>Q_COL[q]||"#888"), size:5, opacity:0.85},
+  text:hs2,
+  hovertemplate:"lon=%{x:.7f}<br>lat=%{y:.7f}<br>%{text}<extra></extra>",
+});
+
+const cosLat = Math.cos(lats2[0]*Math.PI/180);
+const layout2d = {
+  paper_bgcolor:PAPER, plot_bgcolor:BG,
+  font:{color:"#ccc", size:11},
+  margin:{l:60,r:10,t:10,b:44},
+  xaxis:{gridcolor:GRID, zerolinecolor:"#333", title:"Longitude (°)", color:"#aaa",
+         scaleanchor:"y", scaleratio:cosLat},
+  yaxis:{gridcolor:GRID, zerolinecolor:"#333", title:"Latitude (°)", color:"#aaa"},
+  images: D.basemap ? [{
+    source:  D.basemap.png,
+    xref:"x", yref:"y",
+    x: D.basemap.west,  y: D.basemap.north,
+    sizex: D.basemap.east  - D.basemap.west,
+    sizey: D.basemap.north - D.basemap.south,
+    sizing:"stretch", opacity:0.85, layer:"below",
+  }] : [],
+  legend:{bgcolor:"rgba(0,0,0,0.4)", bordercolor:"#333", borderwidth:1},
+};
+
+Plotly.newPlot("plot-2d", traces2d, layout2d, {responsive:true, displayModeBar:true,
+  modeBarButtonsToRemove:["select2d","lasso2d"]});
+
+function toggleBasemap() {
+  if (!D.basemap) return;
+  basemapVisible = !basemapVisible;
+  Plotly.relayout("plot-2d", {"images[0].opacity": basemapVisible ? 0.85 : 0});
+  document.getElementById("btn-basemap").textContent = basemapVisible ? "Hide basemap" : "Show basemap";
+}
+
+// ── 3D plot ──────────────────────────────────────────────────────────────────
+(function build3d() {
+  const traces = [];
+
+  if (D.dsm) {
+    dsmTraceIdx = traces.length;   // DSM is always first trace when present
+    traces.push({
+      type:"surface",
+      x: D.dsm.lons,
+      y: D.dsm.lats,
+      z: D.dsm.z,
+      colorscale:"Earth",
+      showscale:true, colorbar:{thickness:10, len:0.6, x:1.01,
+        tickfont:{color:"#aaa", size:10}, title:{text:"Elev (m)", font:{color:"#aaa", size:10}}},
+      opacity:0.88,
+      name:"DSM terrain",
+      hovertemplate:"lon=%{x:.6f}<br>lat=%{y:.6f}<br>elev=%{z:.1f}m<extra></extra>",
+      contours:{z:{show:false}},
+    });
+  }
+
+  // Smoothed trajectory — single purple line, no quality grouping
+  if (D.smoothed && D.smoothed.length) {
+    traces.push({
+      type:"scatter3d", mode:"lines",
+      x: D.smoothed.map(p=>p.lon),
+      y: D.smoothed.map(p=>p.lat),
+      z: D.smoothed.map(p=>p.h),
+      name:"Smoothed",
+      line:{color:"#a78bfa", width:3},
+      hovertemplate:"lon=%{x:.7f}<br>lat=%{y:.7f}<br>h=%{z:.1f}m<extra>Smoothed</extra>",
+    });
+  }
+
+  // PPK trajectory grouped by quality
+  const grps = {};
+  D.trajectory.forEach(p => {
+    const q = p.q || 0;
+    if (!grps[q]) grps[q] = {lons:[], lats:[], hs:[], txt:[]};
+    grps[q].lons.push(p.lon);
+    grps[q].lats.push(p.lat);
+    grps[q].hs.push(p.h);
+    grps[q].txt.push(p.h.toFixed(1)+"m");
+  });
+
+  Object.keys(grps).sort().forEach(q => {
+    const g = grps[q];
+    traces.push({
+      type:"scatter3d", mode:"lines+markers",
+      x:g.lons, y:g.lats, z:g.hs,
+      name:"PPK "+(Q_NAME[q]||("Q"+q)),
+      line:{color:Q_COL[q]||"#888", width:2},
+      marker:{color:Q_COL[q]||"#888", size:2.5, opacity:0.85},
+      text:g.txt,
+      hovertemplate:"lon=%{x:.7f}<br>lat=%{y:.7f}<br>h=%{text}<extra></extra>",
+    });
+  });
+
+  const layout3d = {
+    paper_bgcolor:PAPER,
+    font:{color:"#ccc", size:11},
+    margin:{l:0,r:60,t:10,b:0},
+    scene:{
+      xaxis:{title:"Longitude", gridcolor:GRID, color:"#aaa", backgroundcolor:BG, showbackground:true},
+      yaxis:{title:"Latitude",  gridcolor:GRID, color:"#aaa", backgroundcolor:BG, showbackground:true},
+      zaxis:{title:"Altitude (m)", gridcolor:GRID, color:"#aaa", backgroundcolor:BG, showbackground:true},
+      bgcolor:BG,
+      aspectmode:"manual",
+      aspectratio:{x:1, y:1, z:0.18},
+      camera:{eye:{x:0, y:-2, z:1.2}},
+    },
+    legend:{bgcolor:"rgba(0,0,0,0.4)", bordercolor:"#333", borderwidth:1},
+  };
+
+  Plotly.newPlot("plot-3d", traces, layout3d, {responsive:true, displayModeBar:true});
+
+  if (D.dsm) document.getElementById("btn-dsm").style.display = "";
+})();
+
+function toggleDsm() {
+  if (dsmTraceIdx < 0) return;
+  dsmVisible = !dsmVisible;
+  Plotly.restyle("plot-3d", {visible: dsmVisible}, [dsmTraceIdx]);
+  document.getElementById("btn-dsm").textContent = dsmVisible ? "Hide DSM" : "Show DSM";
+}
+
+// ── Tab switching ────────────────────────────────────────────────────────────
+function showTab(id) {
+  document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));
+  document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+  document.getElementById("panel-"+id).classList.add("active");
+  document.getElementById("btn-"+id).classList.add("active");
+  document.getElementById("btn-basemap").style.display = (id==="2d" && D.basemap) ? "" : "none";
+  document.getElementById("btn-dsm").style.display     = (id==="3d" && D.dsm)     ? "" : "none";
+  setTimeout(()=>{
+    if (id==="2d") Plotly.Plots.resize("plot-2d");
+    else           Plotly.Plots.resize("plot-3d");
+  }, 10);
+}
+
+window.addEventListener("resize", ()=>{
+  Plotly.Plots.resize("plot-2d");
+  Plotly.Plots.resize("plot-3d");
+});
+</script>
+</body>
+</html>

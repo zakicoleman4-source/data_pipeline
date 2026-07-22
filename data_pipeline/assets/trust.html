@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Fused-bend trust viewer</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.4; }
+    #info .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin-right: 6px; font-size: 12px; }
+    #info .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    #info .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    #info .legend { font-size: 11px; color: #aaa; }
+    .plot { width: 100vw; height: calc(50vh - 60px); }
+    h3 { margin: 6px 12px 0; font-size: 13px; color: #ccc; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>fused-bent trust viewer</b> &mdash; trajectory coloured by per-frame PPK trust.<br>
+    <span class="pill ok">green &rarr; PPK trusted (bend pulled output onto PPK)</span>
+    <span class="pill warn">red &rarr; PPK distrusted (output is FLP shape)</span>
+    <br>
+    <span class="pill" id="pill-frames">frames: __NFRAMES__</span>
+    <span class="pill" id="pill-trust-med">trust median: __TRUST_MED__</span>
+    <span class="pill" id="pill-trust-p10">trust p10: __TRUST_P10__</span>
+    <span class="pill" id="pill-trust-high">trust &ge; 0.5: __TRUST_HIGH__</span>
+    <span class="pill" id="pill-trust-low">trust &le; 0.1: __TRUST_LOW__</span>
+</div>
+<h3>Top view (East / North), coloured by trust</h3>
+<div id="plot2d" class="plot"></div>
+<h3>3D view (East / North / Up), coloured by trust</h3>
+<div id="plot3d" class="plot"></div>
+<script>
+const DATA = __DATA__;
+
+const colorscale = [
+    [0.00, "rgb(220,30,40)"],
+    [0.25, "rgb(240,120,40)"],
+    [0.50, "rgb(230,210,40)"],
+    [0.75, "rgb(150,210,60)"],
+    [1.00, "rgb(40,200,80)"],
+];
+
+const text = DATA.image.map((im, i) =>
+    `${im}<br>trust=${DATA.trust[i].toFixed(3)}<br>E=${DATA.e[i].toFixed(2)} N=${DATA.n[i].toFixed(2)} U=${DATA.u[i].toFixed(2)}`
+);
+
+const trace2d = {
+    type: "scattergl",
+    mode: "markers",
+    x: DATA.e,
+    y: DATA.n,
+    marker: {
+        size: 4,
+        color: DATA.trust,
+        colorscale,
+        cmin: 0, cmax: 1,
+        colorbar: { title: "PPK trust", x: 1.0 },
+        line: { width: 0 },
+    },
+    text,
+    hoverinfo: "text",
+    name: "frames",
+};
+
+const layout2d = {
+    paper_bgcolor: "#111",
+    plot_bgcolor: "#111",
+    font: { color: "#ddd" },
+    margin: { l: 50, r: 80, t: 10, b: 40 },
+    xaxis: { title: "East (m)", color: "#ddd", gridcolor: "#333", scaleanchor: "y" },
+    yaxis: { title: "North (m)", color: "#ddd", gridcolor: "#333" },
+    showlegend: false,
+};
+Plotly.newPlot("plot2d", [trace2d], layout2d, { responsive: true });
+
+const trace3d = {
+    type: "scatter3d",
+    mode: "markers",
+    x: DATA.e,
+    y: DATA.n,
+    z: DATA.u,
+    marker: {
+        size: 2,
+        color: DATA.trust,
+        colorscale,
+        cmin: 0, cmax: 1,
+        showscale: false,
+    },
+    text,
+    hoverinfo: "text",
+    name: "frames",
+};
+const layout3d = {
+    paper_bgcolor: "#111",
+    plot_bgcolor: "#111",
+    font: { color: "#ddd" },
+    margin: { l: 0, r: 0, t: 0, b: 0 },
+    scene: {
+        aspectmode: "data",
+        xaxis: { title: "East (m)", color: "#ddd", gridcolor: "#333" },
+        yaxis: { title: "North (m)", color: "#ddd", gridcolor: "#333" },
+        zaxis: { title: "Up (m)", color: "#ddd", gridcolor: "#333" },
+        bgcolor: "#111",
+    },
+    showlegend: false,
+};
+Plotly.newPlot("plot3d", [trace3d], layout3d, { responsive: true });
+</script>
+</body>
+</html>

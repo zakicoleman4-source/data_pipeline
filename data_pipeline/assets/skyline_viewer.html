@@ -1,0 +1,325 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Urban Skyline — GNSS Obstruction Map</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #060612; color: #ddd; font-family: 'Segoe UI', sans-serif; overflow-x: hidden; }
+    .top-bar { padding: 10px 20px; background: linear-gradient(90deg, #0a0a1a, #0f1a2a); border-bottom: 1px solid #1a2a3a; }
+    .top-bar h1 { margin: 0; font-size: 18px; color: #7ecfff; font-weight: 500; letter-spacing: 0.5px; }
+    .top-bar .subtitle { font-size: 12px; color: #5a7a9a; margin-top: 2px; }
+    .stats-row { display: flex; gap: 16px; padding: 8px 20px; background: #0a0a18; border-bottom: 1px solid #152030; flex-wrap: wrap; }
+    .stat-pill { background: #0d1a2d; border: 1px solid #1a3050; border-radius: 8px; padding: 6px 14px; font-size: 12px; }
+    .stat-pill .val { color: #7ecfff; font-weight: 600; font-size: 14px; }
+    .stat-pill .lbl { color: #4a6a8a; margin-left: 4px; }
+
+    .main-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; height: calc(100vh - 90px); gap: 1px; background: #152030; }
+    .panel { background: #080812; position: relative; overflow: hidden; }
+    .panel-label { position: absolute; top: 8px; left: 12px; font-size: 11px; color: #3a5a7a; text-transform: uppercase; letter-spacing: 1px; z-index: 10; pointer-events: none; }
+
+    #polar-plot { width: 100%; height: 100%; }
+    #panorama-plot { width: 100%; height: 100%; }
+    #snr-heatmap { width: 100%; height: 100%; }
+    #timeline-plot { width: 100%; height: 100%; }
+
+    .legend-overlay { position: absolute; bottom: 10px; right: 12px; background: rgba(8,8,18,0.85); border: 1px solid #1a3050; border-radius: 8px; padding: 8px 12px; font-size: 11px; z-index: 10; }
+    .legend-overlay .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .legend-overlay .swatch { width: 12px; height: 12px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="top-bar">
+    <h1>Urban Skyline — GNSS Obstruction Map</h1>
+    <div class="subtitle">Inferred building silhouette from satellite visibility, multipath residuals &amp; SNR degradation</div>
+</div>
+<div class="stats-row" id="stats-row"></div>
+<div class="main-grid">
+    <div class="panel">
+        <div class="panel-label">Polar Obstruction Mask</div>
+        <div id="polar-plot"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-label">Panoramic Skyline (unrolled)</div>
+        <div id="panorama-plot"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-label">SNR vs Elevation by Azimuth</div>
+        <div id="snr-heatmap"></div>
+    </div>
+    <div class="panel">
+        <div class="panel-label">Obstruction Timeline</div>
+        <div id="timeline-plot"></div>
+    </div>
+</div>
+
+<script>
+const DATA = __SKYLINE_DATA__;
+
+// ── Stats ────────────────────────────────────────────────────────────────────
+const stats = DATA.stats;
+const statsRow = document.getElementById("stats-row");
+const pills = [
+    { val: stats.total_epochs, lbl: "epochs" },
+    { val: stats.total_sats, lbl: "observations" },
+    { val: stats.mean_visible + " / " + stats.mean_tracked, lbl: "solved/tracked avg" },
+    { val: stats.blocked_pct + "%", lbl: "sky blocked" },
+    { val: stats.multipath_pct + "%", lbl: "multipath" },
+    { val: stats.dominant_obstruction, lbl: "worst direction" },
+];
+pills.forEach(p => {
+    const el = document.createElement("div");
+    el.className = "stat-pill";
+    el.innerHTML = `<span class="val">${p.val}</span><span class="lbl">${p.lbl}</span>`;
+    statsRow.appendChild(el);
+});
+
+// ── Color scales ─────────────────────────────────────────────────────────────
+function visColor(v) {
+    // v: 0 = obstructed, 1 = clear sky
+    if (v >= 0.7) return "rgba(34,197,94,0.8)";
+    if (v >= 0.4) return "rgba(100,200,80,0.6)";
+    if (v >= 0.15) return "rgba(250,204,21,0.6)";
+    if (v > 0)     return "rgba(200,100,40,0.5)";
+    return "rgba(120,30,30,0.45)";
+}
+
+// ── Panel 1: Polar Obstruction Mask ──────────────────────────────────────────
+(function() {
+    const grid = DATA.polar_grid;
+    const az = grid.az_bins;
+    const el = grid.el_bins;
+    const vis = grid.visibility;
+
+    // Compute marker size based on bin count to fill the polar area
+    const azStep = az.length > 1 ? az[1] - az[0] : 5;
+    const markerSz = Math.max(6, Math.min(20, Math.round(320 / az.length)));
+
+    // Separate traces: clear, degraded, blocked for better legend
+    const clear = { r: [], theta: [], text: [] };
+    const degraded = { r: [], theta: [], text: [] };
+    const blocked = { r: [], theta: [], text: [] };
+
+    for (let ai = 0; ai < az.length; ai++) {
+        for (let ei = 0; ei < el.length; ei++) {
+            const v = vis[ai][ei];
+            if (v === null) continue;
+            const pt = { r: 90 - el[ei], t: az[ai],
+                         txt: `Az: ${az[ai]}°  El: ${el[ei]}°  Vis: ${(v*100).toFixed(0)}%` };
+            if (v >= 0.4)       { clear.r.push(pt.r); clear.theta.push(pt.t); clear.text.push(pt.txt); }
+            else if (v >= 0.05) { degraded.r.push(pt.r); degraded.theta.push(pt.t); degraded.text.push(pt.txt); }
+            else                { blocked.r.push(pt.r); blocked.theta.push(pt.t); blocked.text.push(pt.txt); }
+        }
+    }
+
+    // Skyline contour
+    const skyline = DATA.skyline;
+    const sky_r = skyline.map(p => 90 - p.el);
+    const sky_theta = skyline.map(p => p.az);
+
+    const traces = [
+        {
+            type: "scatterpolar", mode: "markers", name: "open sky",
+            r: clear.r, theta: clear.theta, text: clear.text,
+            marker: { color: "#22c55e", size: markerSz, symbol: "square",
+                      opacity: 0.7, line: { width: 0 } },
+            hoverinfo: "text",
+        },
+        {
+            type: "scatterpolar", mode: "markers", name: "degraded",
+            r: degraded.r, theta: degraded.theta, text: degraded.text,
+            marker: { color: "#facc15", size: markerSz, symbol: "square",
+                      opacity: 0.6, line: { width: 0 } },
+            hoverinfo: "text",
+        },
+        {
+            type: "scatterpolar", mode: "markers", name: "blocked",
+            r: blocked.r, theta: blocked.theta, text: blocked.text,
+            marker: { color: "#dc2626", size: markerSz, symbol: "square",
+                      opacity: 0.5, line: { width: 0 } },
+            hoverinfo: "text",
+        },
+        {
+            type: "scatterpolar", mode: "lines", name: "skyline",
+            r: sky_r, theta: sky_theta,
+            line: { color: "#7ecfff", width: 2.5 },
+            hoverinfo: "skip",
+        },
+    ];
+
+    Plotly.newPlot("polar-plot", traces, {
+        paper_bgcolor: "#080812",
+        plot_bgcolor: "#080812",
+        font: { color: "#6a8aaa", size: 10 },
+        margin: { l: 40, r: 40, t: 40, b: 20 },
+        showlegend: true,
+        legend: { x: 0.0, y: -0.05, orientation: "h", bgcolor: "rgba(8,8,18,0.8)", font: { size: 10, color: "#7ecfff" } },
+        polar: {
+            bgcolor: "#080812",
+            angularaxis: {
+                direction: "clockwise", rotation: 90,
+                tickvals: [0, 45, 90, 135, 180, 225, 270, 315],
+                ticktext: ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
+                gridcolor: "#152030", linecolor: "#152030", color: "#4a7090",
+            },
+            radialaxis: {
+                range: [0, 90],
+                tickvals: [0, 15, 30, 45, 60, 75, 90],
+                ticktext: ["90°", "75°", "60°", "45°", "30°", "15°", "0°"],
+                gridcolor: "#152030", linecolor: "#152030", color: "#3a5a7a",
+                showline: false,
+            },
+        },
+    }, { responsive: true, displayModeBar: false });
+})();
+
+// ── Panel 2: Panoramic skyline (equirectangular unroll) ──────────────────────
+(function() {
+    const skyline = DATA.skyline;
+    const panorama = DATA.panorama; // { az[], el_clear[], el_multipath[], snr_mean[] }
+
+    // Building silhouette as filled area
+    const traces = [
+        {
+            type: "scatter", mode: "none", name: "obstructed",
+            x: panorama.az, y: panorama.az.map(() => 0),
+            showlegend: false, hoverinfo: "skip",
+        },
+        {
+            type: "scatter", mode: "none", name: "building",
+            x: panorama.az, y: panorama.el_clear,
+            fill: "tonexty",
+            fillcolor: "rgba(40,20,20,0.8)",
+            line: { width: 0 },
+            hoverinfo: "skip",
+        },
+        {
+            type: "scatter", mode: "lines", name: "skyline",
+            x: panorama.az, y: panorama.el_clear,
+            line: { color: "#7ecfff", width: 2.5, shape: "spline" },
+            hovertemplate: "Az: %{x}°<br>Skyline El: %{y:.1f}°<extra></extra>",
+        },
+        {
+            type: "scatter", mode: "lines", name: "multipath zone",
+            x: panorama.az, y: panorama.el_multipath,
+            line: { color: "#ef4444", width: 1.5, dash: "dot" },
+            hovertemplate: "Az: %{x}°<br>Multipath ceiling: %{y:.1f}°<extra></extra>",
+        },
+    ];
+
+    // SNR-colored background bars
+    if (panorama.snr_mean && panorama.snr_mean.length > 0) {
+        traces.push({
+            type: "bar", name: "SNR",
+            x: panorama.az, y: panorama.az.map(() => 90),
+            marker: {
+                color: panorama.snr_mean.map(s =>
+                    s > 35 ? "rgba(34,197,94,0.08)" :
+                    s > 25 ? "rgba(250,204,21,0.08)" : "rgba(239,68,68,0.08)"
+                ),
+                line: { width: 0 },
+            },
+            width: panorama.az.length > 1 ? (panorama.az[1] - panorama.az[0]) * 0.9 : 5,
+            hoverinfo: "skip",
+            showlegend: false,
+        });
+    }
+
+    Plotly.newPlot("panorama-plot", traces, {
+        paper_bgcolor: "#080812",
+        plot_bgcolor: "#080812",
+        font: { color: "#6a8aaa", size: 10 },
+        margin: { l: 50, r: 20, t: 30, b: 40 },
+        showlegend: true,
+        legend: { x: 0.02, y: 0.98, bgcolor: "rgba(8,8,18,0.8)", font: { size: 10 } },
+        xaxis: {
+            title: "Azimuth (°)", range: [0, 360],
+            tickvals: [0, 45, 90, 135, 180, 225, 270, 315, 360],
+            ticktext: ["N", "NE", "E", "SE", "S", "SW", "W", "NW", "N"],
+            gridcolor: "#152030", zerolinecolor: "#152030", color: "#4a7090",
+        },
+        yaxis: {
+            title: "Elevation (°)", range: [0, 90],
+            gridcolor: "#152030", zerolinecolor: "#152030", color: "#4a7090",
+        },
+        barmode: "overlay",
+    }, { responsive: true, displayModeBar: false });
+})();
+
+// ── Panel 3: SNR heatmap ─────────────────────────────────────────────────────
+(function() {
+    const hm = DATA.snr_heatmap; // { az_bins, el_bins, snr[el][az] }
+
+    Plotly.newPlot("snr-heatmap", [{
+        type: "heatmap",
+        x: hm.az_bins, y: hm.el_bins, z: hm.snr,
+        colorscale: [
+            [0, "#1a0000"], [0.2, "#4a1010"], [0.4, "#8a4a00"],
+            [0.6, "#aaaa00"], [0.8, "#44aa44"], [1, "#22ff88"]
+        ],
+        zmin: 0, zmax: 45,
+        colorbar: { title: "dB-Hz", titleside: "right", thickness: 12, len: 0.8,
+                    tickfont: { color: "#6a8aaa" }, titlefont: { color: "#6a8aaa" } },
+        hovertemplate: "Az: %{x}°  El: %{y}°<br>Mean SNR: %{z:.1f} dB-Hz<extra></extra>",
+    }], {
+        paper_bgcolor: "#080812",
+        plot_bgcolor: "#080812",
+        font: { color: "#6a8aaa", size: 10 },
+        margin: { l: 50, r: 60, t: 30, b: 40 },
+        xaxis: {
+            title: "Azimuth (°)",
+            tickvals: [0, 45, 90, 135, 180, 225, 270, 315],
+            ticktext: ["N", "NE", "E", "SE", "S", "SW", "W", "NW"],
+            gridcolor: "#152030", color: "#4a7090",
+        },
+        yaxis: {
+            title: "Elevation (°)", gridcolor: "#152030", color: "#4a7090",
+        },
+    }, { responsive: true, displayModeBar: false });
+})();
+
+// ── Panel 4: Obstruction timeline ────────────────────────────────────────────
+(function() {
+    const tl = DATA.timeline; // { t_s[], n_solved[], n_tracked[], n_multipath[], blocked_frac[] }
+
+    Plotly.newPlot("timeline-plot", [
+        {
+            type: "scatter", mode: "lines", name: "solved",
+            x: tl.t_s, y: tl.n_solved,
+            line: { color: "#22c55e", width: 1.5 },
+            fill: "tozeroy", fillcolor: "rgba(34,197,94,0.15)",
+        },
+        {
+            type: "scatter", mode: "lines", name: "tracked",
+            x: tl.t_s, y: tl.n_tracked,
+            line: { color: "#facc15", width: 1 },
+        },
+        {
+            type: "scatter", mode: "lines", name: "multipath",
+            x: tl.t_s, y: tl.n_multipath,
+            line: { color: "#ef4444", width: 1.5 },
+            fill: "tozeroy", fillcolor: "rgba(239,68,68,0.1)",
+        },
+        {
+            type: "scatter", mode: "lines", name: "blocked %",
+            x: tl.t_s, y: tl.blocked_frac.map(v => v * 100),
+            yaxis: "y2",
+            line: { color: "#7ecfff", width: 1, dash: "dot" },
+        },
+    ], {
+        paper_bgcolor: "#080812",
+        plot_bgcolor: "#080812",
+        font: { color: "#6a8aaa", size: 10 },
+        margin: { l: 50, r: 50, t: 20, b: 40 },
+        showlegend: true,
+        legend: { x: 0.02, y: 0.98, bgcolor: "rgba(8,8,18,0.8)", font: { size: 10 } },
+        xaxis: { title: "Time (s)", gridcolor: "#152030", color: "#4a7090" },
+        yaxis: { title: "Satellite count", gridcolor: "#152030", color: "#4a7090", rangemode: "tozero" },
+        yaxis2: { title: "Blocked %", overlaying: "y", side: "right",
+                  range: [0, 100], gridcolor: "#152030", color: "#7ecfff",
+                  showgrid: false },
+    }, { responsive: true, displayModeBar: false });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>VIO comparison — toggleable trajectories vs ref</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #0b0f17; color: #d8e0ee; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.5; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px; }
+    .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    h3 { margin: 10px 12px 0; font-size: 13px; color: #cbd5e1; }
+    small { color: #94a3b8; }
+    table.cmp { border-collapse: collapse; margin: 8px 12px; font-size: 12px; }
+    table.cmp th, table.cmp td { border: 1px solid #374151; padding: 3px 8px; text-align: right; }
+    table.cmp th { background: #1f2937; color: #cbd5e1; }
+    table.cmp .name { text-align: left; }
+    table.cmp .best { color: #34d399; font-weight: bold; }
+    .plot2d { width: 100vw; height: 58vh; }
+    .ploterr { width: 100vw; height: 28vh; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>VIO comparison vs reference</b> — toggle any trace in the legend.
+    <br>
+    <span class="pill" id="meta">__META__</span>
+    <br>
+    <small>
+        Top: 2D top-down East/North.
+        Bottom: per-epoch horizontal error vs ref (m). All configs sampled
+        AT PPK epochs so they're directly comparable to raw PPK.
+        <b>Lower is better.</b>
+    </small>
+    __TABLE__
+</div>
+
+<h3>Top-down view (East / North) — toggle traces to compare</h3>
+<div id="plot2d" class="plot2d"></div>
+
+<h3>Horizontal error vs ref (m) per epoch</h3>
+<div id="ploterr" class="ploterr"></div>
+
+<script>
+const DATA = __DATA__;
+
+const layoutBase = {
+    paper_bgcolor: "#0b0f17",
+    plot_bgcolor:  "#0b0f17",
+    font: { color: "#d8e0ee" },
+    margin: { l: 60, r: 16, t: 8, b: 36 },
+    xaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    yaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    legend: { font: { color: "#cbd5e1" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+const traces2d = [];
+for (const c of DATA.configs) {
+    if (!c.e.length) continue;
+    traces2d.push({
+        x: c.e, y: c.n,
+        type: "scattergl", mode: "lines",
+        line: { color: c.color, dash: c.dash, width: c.width },
+        opacity: c.opacity,
+        name: c.label,
+    });
+}
+Plotly.newPlot("plot2d", traces2d, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "East (m)", scaleanchor: "y" },
+    yaxis: { ...layoutBase.yaxis, title: "North (m)" },
+}, { responsive: true, displaylogo: false });
+
+const tracesErr = [];
+for (const c of DATA.configs) {
+    if (!c.err_t || !c.err_t.length) continue;
+    tracesErr.push({
+        x: c.err_t, y: c.err_h,
+        type: "scattergl", mode: "lines",
+        line: { color: c.color, width: c.width },
+        opacity: c.opacity,
+        name: c.label,
+    });
+}
+Plotly.newPlot("ploterr", tracesErr, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "t (s since ref start)" },
+    yaxis: { ...layoutBase.yaxis, title: "horiz error vs ref (m)", rangemode: "tozero" },
+}, { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

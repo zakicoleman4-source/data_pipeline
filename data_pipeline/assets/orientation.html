@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Orientation panel</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #111; color: #ddd; font-family: sans-serif; }
+    h1 { font-size: 16px; margin: 10px 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 12px 12px 12px; }
+    .full { grid-column: span 2; }
+    .panel { background: #181818; border: 1px solid #222; padding: 4px; }
+    .summary { padding: 8px 12px; }
+    table { border-collapse: collapse; font-size: 12px; }
+    th, td { border: 1px solid #333; padding: 3px 6px; text-align: right; }
+    th { background: #1a1a1a; }
+    td:first-child, th:first-child { text-align: left; }
+    .small { color: #888; font-size: 12px; }
+    code { background: #222; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h1>Orientation panel &mdash; how was the device (camera) held?</h1>
+<div class="summary">
+    <table>
+        <thead>
+            <tr><th>Metric</th><th>Unit</th><th>min</th><th>max</th><th>mean</th><th>std</th></tr>
+        </thead>
+        <tbody>
+            __STATS_ROWS__
+        </tbody>
+    </table>
+    <div class="small" style="margin-top:8px;">
+        <b>What to look at:</b><br>
+        - <b>pitch / roll</b> are stable when the device is mounted in a fixed pose. Small std = good.<br>
+        - <b>yaw (device)</b> uses the magnetometer and is often noisy in vehicles. We compare it to <b>heading from PPK velocity</b> (from <code>vn,ve</code>). If the offset is constant, the device yaw is usable; if random, magnetometer is unreliable.<br>
+        - <b>yaw - heading</b> approximates the boresight between camera-forward and device-forward when moving.
+    </div>
+</div>
+
+<div class="grid">
+    <div class="panel"><div id="p_pitch"></div></div>
+    <div class="panel"><div id="p_roll"></div></div>
+    <div class="panel full"><div id="p_yaw"></div></div>
+    <div class="panel full"><div id="p_diff"></div></div>
+    <div class="panel"><div id="p_hist_pitch"></div></div>
+    <div class="panel"><div id="p_hist_roll"></div></div>
+</div>
+
+<script>
+const D = __DATA__;
+
+const ts = (id, title, yT, traces) => {
+    Plotly.newPlot(id, traces, {
+        title: { text: title, font: { size: 13, color: "#ddd" } },
+        paper_bgcolor: "#111",
+        plot_bgcolor: "#111",
+        font: { color: "#ddd" },
+        margin: { l: 50, r: 10, t: 30, b: 30 },
+        xaxis: { title: "time (UTC)", color: "#ddd", gridcolor: "#222", type: "date" },
+        yaxis: { title: yT, color: "#ddd", gridcolor: "#222" },
+        legend: { orientation: "h", y: -0.2 },
+    }, { responsive: true });
+};
+
+ts("p_pitch", "pitch", "pitch (deg)", [
+    { x: D.t_orient, y: D.pitch, mode: "lines", type: "scatter", name: "raw", line: { color: "#3b82f6", width: 1 }, opacity: 0.4 },
+    { x: D.t_orient, y: D.pitch_smooth, mode: "lines", type: "scatter", name: "smoothed", line: { color: "#1d4ed8", width: 2 } }
+]);
+ts("p_roll", "roll", "roll (deg)", [
+    { x: D.t_orient, y: D.roll, mode: "lines", type: "scatter", name: "raw", line: { color: "#22c55e", width: 1 }, opacity: 0.4 },
+    { x: D.t_orient, y: D.roll_smooth, mode: "lines", type: "scatter", name: "smoothed", line: { color: "#15803d", width: 2 } }
+]);
+ts("p_yaw", "yaw / heading", "yaw / heading (deg)", [
+    { x: D.t_orient, y: D.yaw, mode: "lines", type: "scatter", name: "device yaw (raw, magnetometer)", line: { color: "#eab308", width: 1 }, opacity: 0.4 },
+    { x: D.t_orient, y: D.yaw_smooth, mode: "lines", type: "scatter", name: "device yaw (smoothed)", line: { color: "#f59e0b", width: 2 } },
+    { x: D.t_pos, y: D.heading, mode: "markers", type: "scatter", name: "heading from PPK velocity (vn,ve)", marker: { color: "#ef4444", size: 4, opacity: 0.7 } }
+]);
+ts("p_diff", "yaw - heading", "yaw - heading (deg, wrapped)", [
+    { x: D.t_diff, y: D.yaw_minus_heading, mode: "markers", type: "scatter", name: "raw yaw - heading", marker: { color: "#a855f7", size: 3, opacity: 0.5 } },
+    { x: D.t_diff_s, y: D.yaw_minus_heading_smooth, mode: "markers", type: "scatter", name: "smoothed yaw - heading", marker: { color: "#06b6d4", size: 4, opacity: 0.85 } }
+]);
+
+const histLayout = (title, xT) => ({
+    title: { text: title, font: { size: 13, color: "#ddd" } },
+    paper_bgcolor: "#111",
+    plot_bgcolor: "#111",
+    font: { color: "#ddd" },
+    margin: { l: 50, r: 10, t: 30, b: 40 },
+    xaxis: { title: xT, color: "#ddd", gridcolor: "#222" },
+    yaxis: { title: "count", color: "#ddd", gridcolor: "#222" },
+});
+Plotly.newPlot("p_hist_pitch", [
+    { x: D.pitch_hist_x, y: D.pitch_hist_y, type: "bar", marker: { color: "#3b82f6" } }
+], histLayout("Pitch distribution", "pitch (deg)"), { responsive: true });
+Plotly.newPlot("p_hist_roll", [
+    { x: D.roll_hist_x, y: D.roll_hist_y, type: "bar", marker: { color: "#22c55e" } }
+], histLayout("Roll distribution", "roll (deg)"), { responsive: true });
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# Dev / build dependencies. Install via:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+# ---- testing ----
+pytest>=7.0.0                  # tests/. Tested 9.0.3
+
+# ---- building the Windows .exe via scripts/build_exe.bat ----
+pyinstaller>=6.0.0

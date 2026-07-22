@@ -1,0 +1,12 @@
+# Client / production install — same as requirements.txt minus optional
+# extras. Use this when shipping to an end-user machine that does NOT
+# need the FGO smoother (FGO matches but does not beat the shipped
+# default cv_rts_pv smoother, so no functional loss).
+#
+# Install on the client machine:
+#     pip install -r requirements-client.txt
+# OR  python install.py --no-gtsam
+# OR  setup.bat --no-gtsam       (Windows)
+# OR  ./setup.sh --no-gtsam      (Unix)
+
+-r requirements.txt

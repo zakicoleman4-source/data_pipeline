@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>FLP-bent vs ref</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; background: #0b0f17; color: #d8e0ee; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.45; }
+    .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px; }
+    .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    .bad { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
+    h3 { margin: 10px 12px 0; font-size: 13px; color: #cbd5e1; }
+    #map { width: 100vw; height: 60vh; }
+    #err { width: 100vw; height: 30vh; }
+    small { color: #94a3b8; }
+    table.cmp { border-collapse: collapse; margin: 8px 12px; font-size: 12px; }
+    table.cmp th, table.cmp td { border: 1px solid #374151; padding: 3px 8px; text-align: right; }
+    table.cmp th { background: #1f2937; color: #cbd5e1; }
+    table.cmp .name { text-align: left; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>FLP-bent vs ref</b> &mdash; device fused-location warped onto PPK anchors vs reference-rover reference.
+    Built using the tuned FusedBendOptions defaults (xy_sigma=1.5, z_sigma=10, reject_k=6, time_smooth=20s).
+    <br>
+    <span class="pill" id="pill-n">epochs: __N__</span>
+    <span class="pill ok" id="pill-rmse">FLP-bent hRMSE: __HRMSE__ m</span>
+    <span class="pill" id="pill-p50">P50: __HP50__ m</span>
+    <span class="pill" id="pill-p95">P95: __HP95__ m</span>
+    <span class="pill warn" id="pill-max">max: __HMAX__ m</span>
+    <span class="pill" id="pill-vrmse">vRMSE: __VRMSE__ m</span>
+    <br>
+    <small>
+        White = ref, magenta = FLP-bent, blue dashed = raw PPK (context).
+        Hover any trace for ENU coords + UTC timestamp.
+        Error timeline (bottom) = |FLP-bent − ref| horizontal per PPK epoch.
+    </small>
+    <table class="cmp">
+      <tr><th>source</th><th>n</th><th>hRMSE</th><th>hP50</th><th>hP95</th><th>hmax</th><th>vRMSE</th></tr>
+      <tr><td class="name">raw PPK</td>__ROW_PPK__</tr>
+      <tr><td class="name">fused-location (raw)</td>__ROW_FUSED__</tr>
+      <tr><td class="name">FLP-bent</td>__ROW_FLP__</tr>
+    </table>
+</div>
+
+<h3>Top-down (East / North, m)</h3>
+<div id="map"></div>
+
+<h3>FLP-bent horizontal error vs ref (m)</h3>
+<div id="err"></div>
+
+<script>
+const DATA = __DATA__;
+const layoutBase = {
+    paper_bgcolor: "#0b0f17", plot_bgcolor: "#0b0f17",
+    font: { color: "#d8e0ee" },
+    margin: { l: 60, r: 16, t: 8, b: 36 },
+    xaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    yaxis: { color: "#cbd5e1", gridcolor: "#1f2937" },
+    legend: { font: { color: "#cbd5e1" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+const mapTraces = [];
+function add(name, src, color, dash, width, opacity) {
+    if (!src || !src.e || !src.e.length) return;
+    mapTraces.push({
+        x: src.e, y: src.n,
+        type: "scattergl", mode: "lines",
+        line: { color, dash, width: width || 2 },
+        opacity: opacity || 1.0,
+        name,
+    });
+}
+add("ref (reference)",       DATA.gt,    "#f8fafc", "solid", 3, 0.7);
+add("raw PPK",          DATA.ppk,   "#60a5fa", "dash",  2, 0.7);
+add("fused-location",   DATA.fused, "#34d399", "dot",   2, 0.7);
+add("FLP-bent",         DATA.flp,   "#c084fc", "solid", 2, 1.0);
+Plotly.newPlot("map", mapTraces, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "East (m)", scaleanchor: "y" },
+    yaxis: { ...layoutBase.yaxis, title: "North (m)" },
+}, { responsive: true, displaylogo: false });
+
+const errTraces = [
+    {
+        x: DATA.err_t, y: DATA.err_h,
+        type: "scattergl", mode: "lines",
+        line: { color: "#c084fc", width: 1.5 },
+        name: "FLP-bent error",
+    },
+    {
+        x: DATA.err_ppk_t, y: DATA.err_ppk_h,
+        type: "scattergl", mode: "lines",
+        line: { color: "#60a5fa", width: 1, dash: "dot" },
+        opacity: 0.6,
+        name: "raw PPK error",
+    },
+    {
+        x: DATA.err_fused_t, y: DATA.err_fused_h,
+        type: "scattergl", mode: "lines",
+        line: { color: "#34d399", width: 1, dash: "dot" },
+        opacity: 0.7,
+        name: "fused-location error",
+    },
+];
+Plotly.newPlot("err", errTraces, {
+    ...layoutBase,
+    xaxis: { ...layoutBase.xaxis, title: "t (s since ref start)" },
+    yaxis: { ...layoutBase.yaxis, title: "horiz error vs ref (m)", rangemode: "tozero" },
+}, { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

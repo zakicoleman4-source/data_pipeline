@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Device clock vs GPS time</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.45; }
+    #info .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px; }
+    #info .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    #info .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    #info .bad  { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
+    #info small { color: #888; }
+    .plot { width: 100vw; height: 32vh; }
+    h3 { margin: 10px 12px 0; font-size: 13px; color: #cbd5e1; }
+    .legend { font-size: 11px; color: #94a3b8; padding: 0 12px; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>Device clock &harr; GPS time</b> &mdash;
+    derived from GNSSLogger <code>Raw</code> rows
+    (<code>FullBiasNanos</code>, <code>BiasNanos</code>,
+    <code>DriftNanosPerSecond</code>, <code>utcTimeMillis</code>).
+    <br>
+    <span class="pill" id="pill-epochs">epochs: __N_EPOCHS__</span>
+    <span class="pill" id="pill-span">span: __SPAN_S__ s</span>
+    <span class="pill" id="pill-leap">leap_s: __LEAP_S__</span>
+    <span class="pill" id="pill-sys-med">sys&minus;GPS median: __SYS_MED_MS__ ms</span>
+    <span class="pill" id="pill-sys-std">sys&minus;GPS std: __SYS_STD_MS__ ms</span>
+    <span class="pill" id="pill-drift">drift: __DRIFT_PPB__ ppb</span>
+    <span class="pill" id="pill-disc">HW disc.: __DISCS__</span>
+    <br>
+    <small>
+        <b>sys&minus;GPS</b> = device Android system clock minus the GNSS-chip-derived UTC
+        (<code>(TimeNanos &minus; FullBiasNanos &minus; BiasNanos)/1e9 + GPS_EPOCH_POSIX &minus; leap_s</code>).
+        It is the offset an app would see when stamping data with <code>System.currentTimeMillis()</code>.
+        Small (&lt; 50 ms) = device NTP-disciplined. Large or step-shaped = OS clock corrections.<br>
+        <b>drift</b> = how fast the GNSS hardware counter slips relative to GPS time;
+        median <code>DriftNanosPerSecond</code> converted to ppb. Stable devices sit at &plusmn;50 ppb.<br>
+        <b>HW disc.</b> = changes in <code>HardwareClockDiscontinuityCount</code>; each jump means the
+        chip&apos;s monotonic counter reset and bias re-locked.
+    </small>
+</div>
+
+<h3>System clock &minus; GPS time (ms)</h3>
+<div class="legend">Blue = per-epoch bias.  Shaded = &plusmn;1&sigma; device-reported uncertainty (<code>BiasUncertaintyNanos</code>).  Red dashes = HW discontinuity events.</div>
+<div id="plot_sys" class="plot"></div>
+
+<h3>GNSS-chip clock drift rate (ppb)</h3>
+<div class="legend">Median &amp; per-epoch <code>DriftNanosPerSecond</code> normalised by 1&nbsp;s; shaded = &plusmn;1&sigma; from <code>DriftUncertaintyNanosPerSecond</code>.</div>
+<div id="plot_drift" class="plot"></div>
+
+<h3>Histogram &mdash; system clock &minus; GPS (ms)</h3>
+<div id="plot_hist" class="plot"></div>
+
+<script>
+const DATA = __DATA__;
+
+const layoutBase = {
+    paper_bgcolor: "#111",
+    plot_bgcolor:  "#111",
+    font: { color: "#ddd" },
+    margin: { l: 70, r: 30, t: 8, b: 40 },
+    xaxis: { title: "t since first epoch (s)", color: "#ddd", gridcolor: "#222" },
+    yaxis: { color: "#ddd", gridcolor: "#222", zerolinecolor: "#444" },
+    showlegend: true,
+    legend: { font: { color: "#ddd" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+// ---- sys-GPS panel ----
+const sysHi = DATA.sys_bias_ms.map((v, i) => v + DATA.sys_unc_ms[i]);
+const sysLo = DATA.sys_bias_ms.map((v, i) => v - DATA.sys_unc_ms[i]);
+const sysBand = {
+    x: DATA.t.concat([...DATA.t].reverse()),
+    y: sysHi.concat([...sysLo].reverse()),
+    type: "scatter", mode: "lines",
+    fill: "toself", fillcolor: "rgba(96,165,250,0.18)",
+    line: { width: 0 },
+    name: "±1σ (chip)", hoverinfo: "skip",
+};
+const sysTrace = {
+    type: "scattergl", mode: "lines+markers",
+    x: DATA.t, y: DATA.sys_bias_ms,
+    marker: { size: 3, color: "#60a5fa" },
+    line:   { color: "#60a5fa", width: 1 },
+    name: "sys − GPS (ms)",
+};
+const discShapes = (DATA.disc_t || []).map(tx => ({
+    type: "line", x0: tx, x1: tx, xref: "x",
+    y0: 0, y1: 1, yref: "paper",
+    line: { color: "#ef4444", width: 1, dash: "dash" },
+}));
+Plotly.newPlot("plot_sys",
+    [sysBand, sysTrace],
+    {
+        ...layoutBase,
+        yaxis: { ...layoutBase.yaxis, title: "sys − GPS (ms)" },
+        shapes: discShapes,
+    },
+    { responsive: true, displaylogo: false });
+
+// ---- drift panel ----
+const driftHi = DATA.drift_ppb.map((v, i) => v + DATA.drift_unc_ppb[i]);
+const driftLo = DATA.drift_ppb.map((v, i) => v - DATA.drift_unc_ppb[i]);
+const driftBand = {
+    x: DATA.t.concat([...DATA.t].reverse()),
+    y: driftHi.concat([...driftLo].reverse()),
+    type: "scatter", mode: "lines",
+    fill: "toself", fillcolor: "rgba(245,158,11,0.18)",
+    line: { width: 0 },
+    name: "±1σ", hoverinfo: "skip",
+};
+const driftTrace = {
+    type: "scattergl", mode: "lines+markers",
+    x: DATA.t, y: DATA.drift_ppb,
+    marker: { size: 3, color: "#f59e0b" },
+    line:   { color: "#f59e0b", width: 1 },
+    name: "drift (ppb)",
+};
+const driftMed = {
+    type: "scatter", mode: "lines",
+    x: [DATA.t[0], DATA.t[DATA.t.length - 1]],
+    y: [DATA.drift_median_ppb, DATA.drift_median_ppb],
+    line: { color: "#a3e635", width: 1, dash: "dot" },
+    name: `median ${DATA.drift_median_ppb.toFixed(1)} ppb`,
+};
+Plotly.newPlot("plot_drift",
+    [driftBand, driftTrace, driftMed],
+    {
+        ...layoutBase,
+        yaxis: { ...layoutBase.yaxis, title: "drift (ppb)" },
+    },
+    { responsive: true, displaylogo: false });
+
+// ---- histogram ----
+const histTrace = {
+    type: "histogram",
+    x: DATA.sys_bias_ms,
+    nbinsx: 80,
+    marker: { color: "#60a5fa" },
+    name: "sys − GPS (ms)",
+};
+Plotly.newPlot("plot_hist",
+    [histTrace],
+    {
+        ...layoutBase,
+        xaxis: { color: "#ddd", gridcolor: "#222", title: "sys − GPS (ms)" },
+        yaxis: { color: "#ddd", gridcolor: "#222", title: "count" },
+        bargap: 0.05,
+        showlegend: false,
+    },
+    { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

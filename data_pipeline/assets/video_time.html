@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Video PTS vs GNSS time</title>
+<script src="plotly.min.js"></script>
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #111; color: #ddd; font-family: sans-serif; }
+    #info { padding: 8px 12px; line-height: 1.45; }
+    #info .pill { display: inline-block; background: #1f2937; border: 1px solid #374151; border-radius: 999px; padding: 2px 10px; margin: 2px 4px 2px 0; font-size: 12px; }
+    #info .ok { background: #064e3b; border-color: #065f46; color: #d1fae5; }
+    #info .warn { background: #78350f; border-color: #b45309; color: #fde68a; }
+    #info .bad  { background: #7f1d1d; border-color: #b91c1c; color: #fecaca; }
+    #info small { color: #888; }
+    .plot { width: 100vw; height: 32vh; }
+    h3 { margin: 10px 12px 0; font-size: 13px; color: #cbd5e1; }
+    .legend { font-size: 11px; color: #94a3b8; padding: 0 12px; }
+    code { background: #1f2937; padding: 1px 4px; border-radius: 3px; color: #e5e7eb; }
+</style>
+</head>
+<body>
+<div id="info">
+    <b>Video PTS &harr; GNSS UTC</b> &mdash;
+    OLS fit <code>utc_s = a + b&middot;video_ns</code> over every
+    <code>recording_*.txt</code> anchor row.
+    <br>
+    <span class="pill" id="pill-n">anchors: __N__</span>
+    <span class="pill" id="pill-rej">rejected: __NREJ__</span>
+    <span class="pill" id="pill-span">span: __SPAN_S__ s</span>
+    <span class="pill" id="pill-drift">drift: __DRIFT_PPM__ ppm</span>
+    <span class="pill" id="pill-rmse">residual RMSE: __RMSE_MS__ ms</span>
+    <span class="pill" id="pill-max">|max|: __MAX_MS__ ms</span>
+    <span class="pill" id="pill-fit">fit &sigma; @ centroid: __FIT_MS__ ms</span>
+    <span class="pill" id="pill-cubic">cubic gain: __CUBIC_MS__ ms</span>
+    <br>
+    <small>
+        <b>drift</b> = (slope &minus; 1 ns/ns) &times; 1e6.  Tells how fast the camera encoder
+        clock slips vs. the Android system clock that timestamps the anchor rows.
+        Devices typically sit in &plusmn;10 ppm.<br>
+        <b>residual RMSE</b> = anchor jitter after subtracting the linear fit
+        (~30 ms is normal for GNSSLogger&apos;s writer cadence).<br>
+        <b>fit &sigma;</b> = OLS uncertainty of the fitted UTC at the anchor centroid
+        (best case); the per-query value grows quadratically with distance from
+        centroid.<br>
+        <b>cubic gain</b> = RMSE drop if a degree-3 fit replaced the linear one.
+        &gt;&gt; the linear RMSE = real non-linear drift the linear model misses.
+    </small>
+</div>
+
+<h3>Residual: anchor UTC &minus; predicted UTC (ms)</h3>
+<div class="legend">Per-anchor jitter against the OLS line.  Structure (slope, jumps, bow) signals real drift the linear model can&apos;t absorb.</div>
+<div id="plot_resid" class="plot"></div>
+
+<h3>Fit &sigma; envelope across span (ms)</h3>
+<div class="legend"><code>sigma_resid &middot; sqrt(1/n + (x &minus; xmean)&sup2; / sxx)</code> &mdash; 1&sigma; uncertainty of the regression at each video timestamp.  Bowl-shape is expected; flatter is better.</div>
+<div id="plot_unc" class="plot"></div>
+
+<h3>Histogram &mdash; residuals (ms)</h3>
+<div id="plot_hist" class="plot"></div>
+
+<script>
+const DATA = __DATA__;
+
+const layoutBase = {
+    paper_bgcolor: "#111",
+    plot_bgcolor:  "#111",
+    font: { color: "#ddd" },
+    margin: { l: 70, r: 30, t: 8, b: 40 },
+    xaxis: { title: "video PTS (s)", color: "#ddd", gridcolor: "#222" },
+    yaxis: { color: "#ddd", gridcolor: "#222", zerolinecolor: "#444" },
+    showlegend: true,
+    legend: { font: { color: "#ddd" }, bgcolor: "rgba(0,0,0,0)" },
+};
+
+// ---- residuals scatter ----
+const resTrace = {
+    type: "scattergl", mode: "markers",
+    x: DATA.t, y: DATA.resid_ms,
+    marker: { size: 3, color: "#60a5fa", opacity: 0.7 },
+    name: "anchor − fit (ms)",
+    hovertemplate: "t=%{x:.2f}s  res=%{y:+.2f} ms<extra></extra>",
+};
+const rmseHi = {
+    type: "scatter", mode: "lines",
+    x: [DATA.t[0], DATA.t[DATA.t.length - 1]],
+    y: [+DATA.rmse_ms, +DATA.rmse_ms],
+    line: { color: "#34d399", width: 1, dash: "dot" },
+    name: `+RMSE ${DATA.rmse_ms.toFixed(1)} ms`,
+};
+const rmseLo = {
+    type: "scatter", mode: "lines",
+    x: [DATA.t[0], DATA.t[DATA.t.length - 1]],
+    y: [-DATA.rmse_ms, -DATA.rmse_ms],
+    line: { color: "#34d399", width: 1, dash: "dot" },
+    name: `−RMSE`,
+    showlegend: false,
+};
+Plotly.newPlot("plot_resid",
+    [resTrace, rmseHi, rmseLo],
+    {
+        ...layoutBase,
+        yaxis: { ...layoutBase.yaxis, title: "anchor − fit (ms)" },
+    },
+    { responsive: true, displaylogo: false });
+
+// ---- fit-uncertainty envelope ----
+const uncTrace = {
+    type: "scatter", mode: "lines",
+    x: DATA.unc_t, y: DATA.unc_ms,
+    line: { color: "#f59e0b", width: 2 },
+    name: "1σ fit uncertainty (ms)",
+    hovertemplate: "t=%{x:.2f}s  σ=%{y:.3f} ms<extra></extra>",
+};
+Plotly.newPlot("plot_unc",
+    [uncTrace],
+    {
+        ...layoutBase,
+        yaxis: { ...layoutBase.yaxis, title: "1σ uncertainty (ms)", rangemode: "tozero" },
+    },
+    { responsive: true, displaylogo: false });
+
+// ---- histogram ----
+const histTrace = {
+    type: "histogram",
+    x: DATA.resid_ms,
+    nbinsx: 80,
+    marker: { color: "#60a5fa" },
+    name: "residuals (ms)",
+};
+Plotly.newPlot("plot_hist",
+    [histTrace],
+    {
+        ...layoutBase,
+        xaxis: { color: "#ddd", gridcolor: "#222", title: "residual (ms)" },
+        yaxis: { color: "#ddd", gridcolor: "#222", title: "count" },
+        bargap: 0.05,
+        showlegend: false,
+    },
+    { responsive: true, displaylogo: false });
+</script>
+</body>
+</html>

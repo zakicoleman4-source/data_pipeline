@@ -1,0 +1,61 @@
+name: Build Windows .exe
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # required by softprops/action-gh-release to create / attach releases
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm data_pipeline.spec
+
+      - name: Verify build output
+        run: |
+          if (-not (Test-Path "dist/data_pipeline/data_pipeline.exe")) {
+            Write-Error "data_pipeline.exe missing"
+            exit 1
+          }
+          if (-not (Test-Path "dist/data_pipeline/_internal/vendor/ffmpeg/bin/ffmpeg.exe")) {
+            Write-Error "bundled ffmpeg missing"
+            exit 1
+          }
+
+      - name: Zip dist folder
+        run: Compress-Archive -Path dist/data_pipeline/* -DestinationPath data_pipeline-windows.zip
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: data_pipeline-windows
+          path: data_pipeline-windows.zip
+          retention-days: 30
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: data_pipeline-windows.zip
