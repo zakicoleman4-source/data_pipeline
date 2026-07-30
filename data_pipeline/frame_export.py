@@ -35,7 +35,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .geo import ecef_to_enu, heading_from_enu, llh_to_ecef
+from .geo import heading_from_enu, llh_to_ecef
 
 LogFn = Callable[[str], None]
 
@@ -56,6 +56,41 @@ OUT_HEADER = (
 _VE = ("DopplerVe_mps", "Ve_mps", "vE_mps", "ve_mps")
 _VN = ("DopplerVn_mps", "Vn_mps", "vN_mps", "vn_mps")
 _VU = ("DopplerVu_mps", "Vu_mps", "vU_mps", "vu_mps")
+
+# Max time (s) a smoothed-velocity query point may sit from BOTH bracketing
+# .pos epochs before we refuse to interpolate across the pair (see
+# ``_smoothed_at_frames``: a real signal gap, e.g. a tunnel, can bracket a
+# turn, and blending the two epochs' velocities would fabricate a heading
+# that never happened).
+_SMOOTHED_VEL_MAX_GAP_S = 1.5
+
+
+def _enu_vec_to_ecef(ve: float, vn: float, vu: float,
+                      lat_deg: float, lon_deg: float) -> tuple[float, float, float]:
+    """Rotate a FREE vector (e.g. velocity) from local-ENU-at-(lat,lon) into
+    ECEF. Same rotation as ``geo.enu_to_llh`` minus the ref-point translation
+    (a velocity has no origin to translate)."""
+    lat = math.radians(lat_deg); lon = math.radians(lon_deg)
+    sl, cl = math.sin(lat), math.cos(lat)
+    so, co = math.sin(lon), math.cos(lon)
+    vx = -so * ve - sl * co * vn + cl * co * vu
+    vy = co * ve - sl * so * vn + cl * so * vu
+    vz = cl * vn + sl * vu
+    return vx, vy, vz
+
+
+def _ecef_vec_to_enu(vx: float, vy: float, vz: float,
+                      lat_deg: float, lon_deg: float) -> tuple[float, float, float]:
+    """Rotate a FREE vector (e.g. velocity) from ECEF into local-ENU-at-(lat,
+    lon). Same rotation as ``geo.ecef_to_enu`` minus the ref-point
+    translation."""
+    lat = math.radians(lat_deg); lon = math.radians(lon_deg)
+    sl, cl = math.sin(lat), math.cos(lat)
+    so, co = math.sin(lon), math.cos(lon)
+    ve = -so * vx + co * vy
+    vn = -sl * co * vx - sl * so * vy + cl * vz
+    vu = cl * co * vx + cl * so * vy + sl * vz
+    return ve, vn, vu
 
 
 def _f(v) -> float:
@@ -196,21 +231,39 @@ def _derive_velocity(order, geo, times):
     enu = {}
     if not order:
         return enu
-    origin = (geo[order[0]]["lat"], geo[order[0]]["lon"],
-              geo[order[0]]["alt"] if math.isfinite(geo[order[0]]["alt"]) else 0.0)
-    pos = {}
+    # BUG (frame-of-reference — same class as `_smoothed_at_frames`): this
+    # used to convert EVERY frame's position into a SINGLE fixed-origin ENU
+    # tangent plane (anchored at ``order[0]``) and difference there. A
+    # position delta between two nearby frames is a free vector, so its
+    # direction is only correct in the tangent plane it's expressed in; the
+    # module docstring promises "azimuth ... is a true geographic bearing"
+    # (i.e. each frame's OWN local-level frame, matching the Doppler
+    # convention), but a fixed far-away origin's East/North axes rotate away
+    # from a frame's own East/North as that frame's position moves away from
+    # the origin (meridian convergence) — a synthetic 120 km track showed the
+    # same 0.67 deg peak / 0.39 deg RMS azimuth bias as the smoothed-velocity
+    # bug (negligible on day15's ~0.8 km track). Fix: work in ECEF (no
+    # translation origin needed — differencing two ECEF positions cancels any
+    # translation) and rotate the *delta* into each frame's OWN local ENU.
+    alts = [geo[s]["alt"] for s in order if math.isfinite(geo[s]["alt"])]
+    alt_fallback = float(np.median(alts)) if alts else 0.0
+    xyz = {}
     for s in order:
         g = geo[s]
-        a = g["alt"] if math.isfinite(g["alt"]) else origin[2]
-        pos[s] = ecef_to_enu(*llh_to_ecef(g["lat"], g["lon"], a), origin)
+        a = g["alt"] if math.isfinite(g["alt"]) else alt_fallback
+        xyz[s] = llh_to_ecef(g["lat"], g["lon"], a)
     for i, s in enumerate(order):
         j0, j1 = order[max(i - 1, 0)], order[min(i + 1, len(order) - 1)]
         dt = tval(j1) - tval(j0)
         if j0 == j1 or not math.isfinite(dt) or abs(dt) < 1e-6:
             enu[s] = (float("nan"), float("nan"), float("nan"))
             continue
-        p0, p1 = pos[j0], pos[j1]
-        enu[s] = ((p1[0] - p0[0]) / dt, (p1[1] - p0[1]) / dt, (p1[2] - p0[2]) / dt)
+        p0, p1 = xyz[j0], xyz[j1]
+        dvx = (p1[0] - p0[0]) / dt
+        dvy = (p1[1] - p0[1]) / dt
+        dvz = (p1[2] - p0[2]) / dt
+        g = geo[s]
+        enu[s] = _ecef_vec_to_enu(dvx, dvy, dvz, g["lat"], g["lon"])
     return enu
 
 
@@ -220,7 +273,36 @@ def _smoothed_at_frames(pos_csv, times, order, log: LogFn):
     Aligns the .pos epochs to the frames by absolute UTC (both the frame-time
     table's ``utc_s`` and ``parse_rtkpos``'s ``utc_s`` are POSIX UTC), so no
     GPST/leap ambiguity. Returns {stem: (lat, lon, alt, vE, vN, vU)} — empty
-    (with a WARN) when UTC is unavailable or the .pos is too short."""
+    (with a WARN) when UTC is unavailable or the .pos is too short.
+
+    BUG (frame-of-reference): ``smooth_epoch_weighted_v2``'s Kalman state is
+    ENU about a single FIXED origin (``pos[0]``) — see its ``ref = (pos[0]...)``
+    — so ``res.vE_smooth/vN_smooth/vU_smooth`` are velocity components in
+    THAT ONE tangent plane for every epoch. The Doppler columns this export
+    also carries (``vE_mps`` etc, from the georef CSV) are the receiver's own
+    local-level velocity AT EACH FRAME'S OWN lat/lon (that's what RTKLIB/a GNSS
+    receiver reports per epoch) — a different, per-point frame. Emitting
+    ``vE_smooth`` directly as ``sm_vE_mps`` therefore mixes two ENU
+    conventions: fine right at ``pos[0]``, but the two tangent planes rotate
+    apart (mainly meridian convergence) as a frame's own position moves away
+    from ``pos[0]`` — same effect as `~/.claude` note on the analytic proof:
+    a synthetic 120 km-east track showed 0.67 deg peak / 0.39 deg RMS azimuth
+    bias from this alone (vs 0.005 deg on day15's ~0.8 km track, i.e. real but
+    negligible at this session's scale — grows with track extent, so it will
+    bite on long highway captures). Fix: rotate the smoothed velocity out of
+    the ``pos[0]``-anchored frame and into each FRAME'S OWN local ENU (via
+    ECEF, exact) before reporting it — the same convention as the Doppler and
+    coordinate-delta velocity columns.
+
+    BUG (gap interpolation): ``np.interp`` linearly blends velocity across
+    ANY two bracketing .pos epochs, including a real signal gap (e.g. a
+    tunnel/urban canyon). If the vehicle turns during the gap, the blended
+    velocity is a fabricated average of the pre- and post-turn headings —
+    wrong for the entire gap, not just imprecise. Mirror the codebase's
+    existing ``interp_pos``/``interp_pos_with_velocity`` convention
+    (parsers.py): refuse to report smoothed velocity when the bracketing
+    .pos epochs are more than ``_SMOOTHED_VEL_MAX_GAP_S`` apart.
+    """
     futc = {s: _f(times.get(s, ("", "", ""))[1]) for s in order}
     if not any(math.isfinite(v) for v in futc.values()):
         log("[export] smoothed: needs UTC (raw session folder) to align the .pos "
@@ -245,16 +327,36 @@ def _smoothed_at_frames(pos_csv, times, order, log: LogFn):
     ll = np.array([enu_to_llh(float(E[i]), float(N[i]), float(U[i]), ref)
                    for i in range(len(E))])
     lo_t, hi_t = ep[0], ep[-1]
+    n_gap_skipped = 0
     out = {}
     for s in order:
         t = futc[s]
         if not math.isfinite(t) or t < lo_t - 1.0 or t > hi_t + 1.0:
             continue                             # frame outside the .pos span
-        out[s] = (float(np.interp(t, ep, ll[:, 0])), float(np.interp(t, ep, ll[:, 1])),
-                  float(np.interp(t, ep, ll[:, 2])), float(np.interp(t, ep, vE)),
-                  float(np.interp(t, ep, vN)), float(np.interp(t, ep, vU)))
+        sla = float(np.interp(t, ep, ll[:, 0]))
+        slo = float(np.interp(t, ep, ll[:, 1]))
+        sal = float(np.interp(t, ep, ll[:, 2]))
+        # Gap check: reject velocity (not position) when the bracketing .pos
+        # epochs straddling `t` are further apart than the real-gap threshold.
+        idx = int(np.searchsorted(ep, t))
+        lo_i, hi_i = max(idx - 1, 0), min(idx, len(ep) - 1)
+        bracket_gap = ep[hi_i] - ep[lo_i] if hi_i > lo_i else 0.0
+        if bracket_gap > _SMOOTHED_VEL_MAX_GAP_S:
+            n_gap_skipped += 1
+            sve = svn = svu = float("nan")
+        else:
+            sve_ref = float(np.interp(t, ep, vE))
+            svn_ref = float(np.interp(t, ep, vN))
+            svu_ref = float(np.interp(t, ep, vU))
+            # Rotate the pos[0]-anchored velocity into THIS frame's own local
+            # ENU (via ECEF) so it matches the Doppler/coord-delta convention.
+            vx, vy, vz = _enu_vec_to_ecef(sve_ref, svn_ref, svu_ref, ref[0], ref[1])
+            sve, svn, svu = _ecef_vec_to_enu(vx, vy, vz, sla, slo)
+        out[s] = (sla, slo, sal, sve, svn, svu)
     log(f"[export] smoothed (weighted_v2): {len(out)}/{len(order)} frames from "
-        f"{len(pos)} .pos epochs ({res.n_zupt_updates} ZUPT, {res.n_nhc_updates} NHC)")
+        f"{len(pos)} .pos epochs ({res.n_zupt_updates} ZUPT, {res.n_nhc_updates} NHC)"
+        + (f", {n_gap_skipped} velocity-blanked (>{_SMOOTHED_VEL_MAX_GAP_S:.1f}s .pos gap)"
+           if n_gap_skipped else ""))
     return out
 
 
